@@ -1,0 +1,34 @@
+# Ignorar archivos de datos binarios del proyecto
+*.mdf
+*.mf4
+
+# Notebooks temporales
+.ipynb_checkpoints/
+
+# Archivos de Python compilados
+__pycache__/
+*.py[cod]
+*.so
+
+# Entornos virtuales
+env/
+venv/
+.venv/
+
+# Archivos de configuración de Jupyter
+*.nbconvert.ipynb
+
+# Archivos de log o caché
+*.log
+*.cache
+*.bak
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de salida o resultados
+*.pkl
+*.npy
+*.csv
+*.h5

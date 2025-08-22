@@ -10,3 +10,6 @@ h2o==3.46.0.7
 seaborn==0.13.2
 asammdf==7.3.18
 numpy==1.26.4
+statsmodels==0.14.4
+pyarrow
+fastparquet

@@ -15,6 +15,17 @@ env/
 venv/
 .venv/
 
+# Carpetas con datos
+
+data/
+SKAB/
+WADI/
+RANSynCoders-main/
+OmniAnomaly-master/
+CATS/
+BATADAL/
+
+
 # Archivos de configuración de Jupyter
 *.nbconvert.ipynb
 

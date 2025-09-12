@@ -390,6 +390,29 @@ def inspect_parquet(folder: str, split: str = "training", n: int = 5):
     print(df.head(n))
     return df
 
+def load_project_parquets(folder: str):
+    """
+    Carga los tres splits (training, validation, test) de un dataset en formato parquet.
+
+    Args:
+        folder (str): Ruta a la carpeta donde están los parquet (ej: data/SMAP).
+
+    Returns:
+        dict: Diccionario con DataFrames para cada split.
+    """
+    splits = ["training", "validation", "test"]
+    data = {}
+    for split in splits:
+        path = os.path.join(folder, f"{split}.parquet")
+        if os.path.exists(path):
+            df = pd.read_parquet(path)
+            data[split] = df
+            print(f"[✓] {split} cargado desde {path} ({len(df)} filas)")
+        else:
+            print(f"[!] No existe el archivo {path}")
+            data[split] = None
+    return data
+
 if __name__ == "__main__":
 
     dataset = "WADI"
@@ -403,6 +426,17 @@ if __name__ == "__main__":
     inspect_parquet(f'data/{dataset}', "training")
     inspect_parquet(f'data/{dataset}', "validation")
     inspect_parquet(f'data/{dataset}', "test")
+
+    # data = load_project_parquets("data/WADI")
+
+    # #Visualizar datos
+
+    # for split, df in data.items():
+    #     if df is not None:
+    #         print(f"\n--- {split.upper()} ---")
+    #         print(df.head())
+    #         print(f"Filas: {len(df)}, Columnas: {list(df.columns)}")
+
 
 
 

@@ -411,7 +411,7 @@ def load_project_parquets(folder: str):
         else:
             print(f"[!] No existe el archivo {path}")
             data[split] = None
-    return data
+    return data["training"], data["validation"], data["test"]
 
 if __name__ == "__main__":
 
@@ -419,7 +419,7 @@ if __name__ == "__main__":
 
     DatasetsToParquet(
         dataset_name=dataset,
-        input_path=".",  
+        input_path="../",  
         output_path="./data"
     ).convert()
 

@@ -1,15 +1,15 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
-import pickle
-import os
-from types import SimpleNamespace
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
 import pandas as pd
 from typing import Optional, Tuple, List, Literal
 from statsmodels.tsa.statespace.varmax import VARMAX
 from dataclasses import dataclass
 from scipy.stats import chi2
 from numpy.linalg import inv
+import pandas as pd
+from datasets_to_parquet import load_project_parquets
+from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 CombineT = Literal["mahal", "l2"]
 
@@ -87,6 +87,12 @@ class VARIMADetector:
         assert self.k_ >= 1, "Se requiere al menos una variable"
         X_train = X_train.astype(float)
 
+        # En las columnas constantes, añadir ruido muy pequeño para evitar problemas con la matriz de covarianza
+        for col in X_train.columns:
+            if X_train[col].nunique() == 1:
+                X_train[col] += np.random.normal(0, 1e-6, size=len(X_train))
+
+
         # Guardar historial (últimas d filas del original) para diferenciar eval
         self._train_tail_ = X_train.tail(self.d) if self.d > 0 else X_train.tail(0)
 
@@ -97,7 +103,7 @@ class VARIMADetector:
 
         # Ajustar VARMA(p,q) (vía VARMAX sin exógenas)
         model = VARMAX(endog=Xtr_diff, order=self.order, trend=self.trend,
-                       enforce_stationarity=False, enforce_invertibility=False)
+                       enforce_stationarity=True, enforce_invertibility=True)
         res = model.fit(disp=False, maxiter=500)
 
         # Innovaciones (residuos) en training diferenciado
@@ -107,7 +113,7 @@ class VARIMADetector:
         # Covarianza de innovaciones + regularización mínima
         Sigma = np.cov(R.T) if R.ndim == 2 and R.shape[0] > 1 else np.atleast_2d(np.var(R, axis=0))
         Sigma = np.atleast_2d(Sigma)
-        eps = 1e-8
+        eps = 1e-6
         Sigma = Sigma + eps * np.eye(self.k_)
         Sigma_inv = inv(Sigma)
         sigma_diag = np.sqrt(np.clip(np.diag(Sigma), eps, None))
@@ -128,27 +134,18 @@ class VARIMADetector:
 
     # ------------------ Puntuación / Predicción ------------------
     def anomaly_score(self, X_eval: pd.DataFrame) -> np.ndarray:
-        """
-        Score por instante usando rolling one-step-ahead en la serie DIFERENCIADA.
-        Devuelve D^2 (Mahalanobis) o ||z||^2 por tiempo.
-        """
         self._check_fitted()
         assert list(X_eval.columns) == self.columns_, "Columnas de X_eval deben coincidir con training"
         X_eval = X_eval.astype(float)
 
-        # Diferenciar eval con historial del training
         Xev_diff = _difference_with_history(X_eval, self._train_tail_, self.d)
-
-        # Rolling: pronóstico one-step en espacio diferenciado
         res_roll = self._fit.res
         scores: List[float] = []
 
-        for _, y_t_diff in Xev_diff.iterrows():
-            # Predicción 1 paso (en espacio diferenciado)
-            yhat = res_roll.forecast(steps=1).iloc[0].values  # (k,)
-            r = (y_t_diff.values - yhat).astype(float)        # innovación
+        for _, y_t_diff in tqdm(Xev_diff.iterrows(), total=len(Xev_diff), desc="Scoring"):
+            yhat = res_roll.forecast(steps=1).iloc[0].values
+            r = (y_t_diff.values - yhat).astype(float)
             scores.append(self._score_vector(r))
-            # Actualizar filtro con observación (diferenciada)
             res_roll = res_roll.append(y_t_diff.to_frame().T)
 
         return np.asarray(scores)
@@ -178,3 +175,52 @@ class VARIMADetector:
     def _check_fitted(self):
         if self._fit is None or self.threshold_ is None or self.columns_ is None:
             raise RuntimeError("Debes llamar a fit(X_train) antes de puntuar o predecir.")
+        
+if __name__ == "__main__":
+    # Ruta al dataset procesado
+    dataset_folder = "D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\BATADAL"  # Ajusta la ruta según tu estructura
+
+    # Cargar splits
+    df_train, df_val, df_test = load_project_parquets(dataset_folder)
+
+    # Seleccionar solo variables numéricas (excluyendo timestamp y anomaly)
+    cols = [c for c in df_train.columns if c not in ("timestamp", "anomaly")]
+    X_train = df_train[cols]
+    X_val = df_val[cols]
+    X_test = df_test[cols]
+
+    # Etiquetas reales
+    y_val = df_val["anomaly"].values if "anomaly" in df_val.columns else None
+    y_test = df_test["anomaly"].values if "anomaly" in df_test.columns else None
+
+    # Instanciar y ajustar VARIMA
+    detector = VARIMADetector(order=(1,0), d=0, contamination=0.01, combine="mahal")
+    detector.fit(X_train)
+
+    # Predecir anomalías
+    y_pred_val = detector.predict(X_val)
+    y_pred_test = detector.predict(X_test)
+
+    # Mostrar métricas
+    print("\n--- VALIDACIÓN ---")
+
+    if y_val is not None:
+        ConfusionMatrixDisplay.from_predictions(y_val, y_pred_val)
+        plt.title("Matriz de confusión (Validación)")
+        plt.show()
+
+    # Visualizar scores en validación
+    scores_val = detector.anomaly_score(X_val)
+    plt.figure()
+    plt.plot(scores_val, label="Score")
+    plt.axhline(detector.threshold_, color="r", linestyle="--", label="Umbral")
+    plt.title("Scores de anomalía (Validación)")
+    plt.legend()
+    plt.show()
+
+    print("\n--- TEST ---")
+    if y_test is not None:
+        print(classification_report(y_test, y_pred_test, digits=3))
+        print(confusion_matrix(y_test, y_pred_test))
+    else:
+        print("No hay columna 'anomaly' en test.")

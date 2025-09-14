@@ -13,3 +13,4 @@ numpy==1.26.4
 statsmodels==0.14.4
 pyarrow
 fastparquet
+tqdm==4.67.1

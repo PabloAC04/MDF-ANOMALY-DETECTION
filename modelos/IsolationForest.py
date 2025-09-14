@@ -1,15 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
-import pickle
-import os
-from types import SimpleNamespace
-import pandas as pd
-from typing import Optional, Tuple, List, Literal
-from statsmodels.tsa.statespace.varmax import VARMAX
-from dataclasses import dataclass
-from scipy.stats import chi2
-from numpy.linalg import inv
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from datasets_to_parquet import load_project_parquets
 
 def harmonic_number(n):
     if n <= 1:
@@ -133,3 +125,57 @@ class IsolationForest:
         """
         tau = threshold if threshold is not None else self.threshold_
         return self.anomaly_score(X) >= tau
+
+
+if __name__ == "__main__":
+    # Ruta al dataset procesado
+    dataset_folder = "D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\BATADAL"  # Ajusta la ruta según tu estructura
+
+    # Cargar splits
+    df_train, df_val, df_test = load_project_parquets(dataset_folder)
+
+    # Seleccionar solo variables numéricas (excluyendo timestamp y anomaly)
+    cols = [c for c in df_train.columns if c not in ("timestamp", "anomaly")]
+    X_train = df_train[cols].values
+    X_val = df_val[cols].values
+    X_test = df_test[cols].values
+
+    # Etiquetas reales
+    y_val = df_val["anomaly"].values if "anomaly" in df_val.columns else None
+    y_test = df_test["anomaly"].values if "anomaly" in df_test.columns else None
+
+    # Instanciar y ajustar Isolation Forest
+    detector = IsolationForest(n_trees=100, sample_size=256, contamination=0.01)
+    print("[IsolationForest] Entrenando...")
+    detector.fit(X_train)
+    print("[IsolationForest] Entrenamiento terminado.")
+
+    # Predecir anomalías
+    y_pred_val = detector.predict(X_val)
+    y_pred_test = detector.predict(X_test)
+
+    # Mostrar métricas y visualizaciones
+    print("\n--- VALIDACIÓN ---")
+    if y_val is not None:
+        ConfusionMatrixDisplay.from_predictions(y_val, y_pred_val)
+        plt.title("Matriz de confusión (Validación)")
+        plt.show()
+
+        print(classification_report(y_val, y_pred_val, digits=3))
+        print(confusion_matrix(y_val, y_pred_val))
+
+        # Visualizar scores en validación
+        scores_val = detector.anomaly_score(X_val)
+        plt.figure()
+        plt.plot(scores_val, label="Score")
+        plt.axhline(detector.threshold_, color="r", linestyle="--", label="Umbral")
+        plt.title("Scores de anomalía (Validación)")
+        plt.legend()
+        plt.show()
+
+    print("\n--- TEST ---")
+    if y_test is not None:
+        print(classification_report(y_test, y_pred_test, digits=3))
+        print(confusion_matrix(y_test, y_pred_test))
+    else:
+        print("No hay columna 'anomaly' en test.")

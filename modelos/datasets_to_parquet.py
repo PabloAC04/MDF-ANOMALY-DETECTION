@@ -7,7 +7,7 @@ import ast
 
 class DatasetsToParquet:
     
-    def __init__(self, dataset_name: str, input_path: str, output_path: str):
+    def __init__(self, dataset_name: str, input_path = "D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION", output_path = "D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data"):
         self.dataset_name = dataset_name
         self.input_path = input_path
         self.output_path = output_path
@@ -53,7 +53,7 @@ class DatasetsToParquet:
         if "DATETIME" in df2.columns:
             df2.rename(columns={"DATETIME": "timestamp"}, inplace=True)
         if "ATT_FLAG" in df1.columns:
-            df1.drop(columns=["ATT_FLAG"], inplace=True)
+            df1.drop(columns=["ATT_FLAG"], inplace=True)  # no tiene sentido en train
         if "ATT_FLAG" in df2.columns:
             df2.rename(columns={"ATT_FLAG": "anomaly"}, inplace=True)
 
@@ -61,66 +61,75 @@ class DatasetsToParquet:
         if "anomaly" in df2.columns:
             df2["anomaly"] = df2["anomaly"].replace(-999, 0)
 
-        # Guardar TRAIN
+        # --- Añadir columna 'split' ---
+        df1["anomaly"] = 0  # dataset1 es training sin anomalías
+        df1["split"] = "train"
+
+        validation_size = int(len(df2) * 0.6)
+        validation_df = df2.iloc[:validation_size].copy()
+        test_df = df2.iloc[validation_size:].copy()
+
+        validation_df["split"] = "val"
+        test_df["split"] = "test"
+
+        # Concatenar todo
+        df_all = pd.concat([df1, validation_df, test_df], axis=0).reset_index(drop=True)
+
+        # Guardar en único parquet
         folder_save = os.path.join(self.output_path, "BATADAL")
         os.makedirs(folder_save, exist_ok=True)
-        self._save_to_parquet(df1, os.path.join(folder_save, "training.parquet"))
+        self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
 
-        # Dividir en validación (60%) y test (40%)
-        validation_size = int(len(df2) * 0.6)
-        validation_df = df2.iloc[:validation_size]
-        test_df = df2.iloc[validation_size:]
-
-        # Guardar VAL y TEST
-        self._save_to_parquet(validation_df, os.path.join(folder_save, "validation.parquet"))
-        self._save_to_parquet(test_df, os.path.join(folder_save, "test.parquet"))
-
+        print(f"[✓] Dataset BATADAL procesado y guardado en {folder_save}/data.parquet")
 
     def _process_skab(self):
         print("[...] Procesando dataset SKAB")
 
         dataset_train = os.path.join(self.input_path, "SKAB", "anomaly-free", "anomaly-free.csv")
 
-        # Cambiar el nombre de la columna DATETIME a timestamp
+        # Cargar dataset de entrenamiento
         df_train = pd.read_csv(dataset_train, sep=";", decimal=".")
-
         df_train.rename(columns={"DATETIME": "timestamp"}, inplace=True)
 
-        # Guardar el dataset de entrenamiento
-        folder_save = os.path.join(self.output_path, "SKAB")
-        if not os.path.exists(folder_save):
-            os.makedirs(folder_save)
-        training_path = os.path.join(folder_save, "training.parquet")
-        self._save_to_parquet(df_train, training_path)
+        df_train["anomaly"] = 0   # entrenamiento sin anomalías
+        df_train["split"] = "train"
 
-        test_val_paths = ["0.csv", "1.csv", "2.csv", "3.csv", "4.csv", "5.csv", "6.csv", "7.csv", "8.csv", "9.csv", "10.csv", "11.csv", "12.csv", "13.csv", "14.csv", "15.csv"]
+        # Cargar datasets de test/val (concatenados)
+        test_val_paths = [
+            "0.csv", "1.csv", "2.csv", "3.csv", "4.csv", "5.csv", "6.csv", "7.csv",
+            "8.csv", "9.csv", "10.csv", "11.csv", "12.csv", "13.csv", "14.csv", "15.csv"
+        ]
 
         df_test_val = pd.DataFrame()
 
         for path in test_val_paths:
             full_path = os.path.join(self.input_path, "SKAB", "valve1", path)
             df_test_val_sub = pd.read_csv(full_path, sep=";", decimal=".")
-
-            # Cambiar el nombre de la columna DATETIME a timestamp
             df_test_val_sub.rename(columns={"DATETIME": "timestamp"}, inplace=True)
-            
-
             df_test_val = pd.concat([df_test_val, df_test_val_sub], ignore_index=True)
 
+        # Quitar columna "changepoint" si existe
         if "changepoint" in df_test_val.columns:
             df_test_val.drop(columns=["changepoint"], inplace=True)
-        # Guardar el dataset de validación y test 60% 40%
-        
-        validation_size = int(len(df_test_val) * 0.6)
-        validation_df = df_test_val.iloc[:validation_size]
-        test_df = df_test_val.iloc[validation_size:]
 
-        # Guardar el dataset de validación
-        validation_path = os.path.join(folder_save, "validation.parquet")
-        self._save_to_parquet(validation_df, validation_path)
-        # Guardar el dataset de test
-        test_path = os.path.join(folder_save, "test.parquet")
-        self._save_to_parquet(test_df, test_path)
+        # Split 60% val / 40% test
+        validation_size = int(len(df_test_val) * 0.6)
+        validation_df = df_test_val.iloc[:validation_size].copy()
+        test_df = df_test_val.iloc[validation_size:].copy()
+
+        validation_df["split"] = "val"
+        test_df["split"] = "test"
+
+        # Concatenar todo
+        df_all = pd.concat([df_train, validation_df, test_df], axis=0).reset_index(drop=True)
+
+        # Guardar único data.parquet
+        folder_save = os.path.join(self.output_path, "SKAB")
+        os.makedirs(folder_save, exist_ok=True)
+        self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
+
+        print(f"[✓] Dataset SKAB procesado y guardado en {folder_save}/data.parquet")
+
 
     def _save_to_parquet(self, df, path):
         if not os.path.exists(self.output_path):
@@ -138,61 +147,59 @@ class DatasetsToParquet:
         df_train = pd.read_csv(training_file, low_memory=False)
         df_attack = pd.read_csv(attack_file, skiprows=1, low_memory=False)
 
-        # Limpiar nombres de columnas para evitar errores con espacios
+        # Limpiar nombres de columnas
         df_train.columns = df_train.columns.str.strip()
         df_attack.columns = df_attack.columns.str.strip()
 
-
-        # Eliminar columna "Row" o "Row " si está presente
+        # Eliminar columnas innecesarias
         for df in [df_train, df_attack]:
             for col in ["Row", "Row "]:
                 if col in df.columns:
                     df.drop(columns=[col], inplace=True)
 
-        # Crear columna 'timestamp' uniendo 'Date' y 'Time'
+        # Crear columna 'timestamp'
         df_train["timestamp"] = pd.to_datetime(
             df_train["Date"] + " " + df_train["Time"],
             format="%m/%d/%y %M:%S.%f",
             errors="coerce"
         )
-
         df_attack["timestamp"] = pd.to_datetime(
             df_attack["Date"] + " " + df_attack["Time"],
             format="%m/%d/%y %M:%S.%f",
             errors="coerce"
         )
-        
+
         # Eliminar columnas originales Date/Time
         df_train.drop(columns=["Date", "Time"], inplace=True)
         df_attack.drop(columns=["Date", "Time"], inplace=True)
 
-        # Renombrar la columna de etiquetas de anomalía
+        # Renombrar y ajustar etiquetas de anomalía
         label_col = "Attack LABLE (1:No Attack, -1:Attack)"
         if label_col in df_attack.columns:
             df_attack.rename(columns={label_col: "anomaly"}, inplace=True)
-            df_attack["anomaly"] = df_attack["anomaly"].replace({1: 0, -1: 1})  # <-- AJUSTE CLAVE AQUÍ
+            df_attack["anomaly"] = df_attack["anomaly"].replace({1: 0, -1: 1})
 
-        # Crear carpeta de salida
-        folder_save = os.path.join(self.output_path, "WADI")
-        if not os.path.exists(folder_save):
-            os.makedirs(folder_save)
+        # Asegurar columna anomaly en df_train (entrenamiento sin ataques)
+        df_train["anomaly"] = 0
 
-        # Guardar dataset de entrenamiento
-        training_path = os.path.join(folder_save, "training.parquet")
-        self._save_to_parquet(df_train, training_path)
-
-        # Dividir dataset de ataques en validación y test
+        # Añadir columna 'split'
+        df_train["split"] = "train"
         val_size = int(len(df_attack) * 0.6)
-        df_val = df_attack.iloc[:val_size]
-        df_test = df_attack.iloc[val_size:]
+        df_val = df_attack.iloc[:val_size].copy()
+        df_test = df_attack.iloc[val_size:].copy()
+        df_val["split"] = "val"
+        df_test["split"] = "test"
 
-        # Guardar validación
-        validation_path = os.path.join(folder_save, "validation.parquet")
-        self._save_to_parquet(df_val, validation_path)
+        # Concatenar todo en un solo DataFrame
+        df_all = pd.concat([df_train, df_val, df_test], axis=0).reset_index(drop=True)
 
-        # Guardar test
-        test_path = os.path.join(folder_save, "test.parquet")
-        self._save_to_parquet(df_test, test_path)
+        # Guardar único data.parquet
+        folder_save = os.path.join(self.output_path, "WADI")
+        os.makedirs(folder_save, exist_ok=True)
+        self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
+
+        print(f"[✓] Dataset WADI procesado y guardado en {folder_save}/data.parquet")
+
 
     def _process_EbayRanSynCoders(self):
         print("[...] Procesando dataset EbayRanSynCoders")
@@ -212,29 +219,33 @@ class DatasetsToParquet:
         df_test.rename(columns={"timestamp_(min)": "timestamp"}, inplace=True)
 
         # Unir etiquetas de test
-        df_test = df_test.merge(df_labels.rename(columns={"timestamp_(min)": "timestamp", "label": "anomaly"}), on="timestamp", how="left")
+        df_test = df_test.merge(
+            df_labels.rename(columns={"timestamp_(min)": "timestamp", "label": "anomaly"}),
+            on="timestamp",
+            how="left"
+        )
 
-        # Crear carpeta de salida
-        folder_save = os.path.join(self.output_path, "EbayRanSynCoders")
-        if not os.path.exists(folder_save):
-            os.makedirs(folder_save)
+        # Asegurar columna anomaly en train (sin anomalías conocidas)
+        df_train["anomaly"] = 0
 
-        # Guardar entrenamiento
-        training_path = os.path.join(folder_save, "training.parquet")
-        self._save_to_parquet(df_train, training_path)
-
-        # Dividir test en validación (60%) y test (40%)
+        # Añadir columna split
+        df_train["split"] = "train"
         val_size = int(len(df_test) * 0.6)
-        df_val = df_test.iloc[:val_size]
-        df_test_final = df_test.iloc[val_size:]
+        df_val = df_test.iloc[:val_size].copy()
+        df_test_final = df_test.iloc[val_size:].copy()
+        df_val["split"] = "val"
+        df_test_final["split"] = "test"
 
-        # Guardar validación
-        validation_path = os.path.join(folder_save, "validation.parquet")
-        self._save_to_parquet(df_val, validation_path)
+        # Concatenar todo en un único DataFrame
+        df_all = pd.concat([df_train, df_val, df_test_final], axis=0).reset_index(drop=True)
 
-        # Guardar test
-        test_path = os.path.join(folder_save, "test.parquet")
-        self._save_to_parquet(df_test_final, test_path)
+        # Guardar en un único data.parquet
+        folder_save = os.path.join(self.output_path, "EbayRanSynCoders")
+        os.makedirs(folder_save, exist_ok=True)
+        self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
+
+        print(f"[✓] Dataset EbayRanSynCoders procesado y guardado en {folder_save}/data.parquet")
+
 
     def _process_smap(self):
         print("[...] Procesando dataset SMAP (carpeta compartida)")
@@ -254,17 +265,15 @@ class DatasetsToParquet:
 
     def _process_smap_msl_generic(self, dataset_folder: str, spacecraft: str, exclude_channels: set):
         """
-            Entrada (compartida):
+        Entrada (compartida):
             {input_path}/{dataset_folder}/
                 ├── labeled_anomalies.csv  (spacecraft ∈ {SMAP, MSL})
                 └── data/data/
-                    ├── train/*.npy        (mezclados)
-                    └── test/*.npy         (mezclados)
+                    ├── train/*.npy
+                    └── test/*.npy
 
-            Salida (separada por nave):
-                {output_path}/{spacecraft}/training.parquet
-                {output_path}/{spacecraft}/validation.parquet
-                {output_path}/{spacecraft}/test.parquet
+        Salida (un único data.parquet con splits):
+            {output_path}/{spacecraft}/data.parquet
         """
         root = os.path.join(self.input_path, dataset_folder)
         data_dir = os.path.join(root, "data", "data")
@@ -276,14 +285,12 @@ class DatasetsToParquet:
             raise FileNotFoundError(f"No se encuentra {lab_csv}")
 
         df_lab_all = pd.read_csv(lab_csv)
-        # Filtra por nave y ordena por chan_id como hace el script de referencia
         df_lab = (
             df_lab_all[df_lab_all["spacecraft"].astype(str).str.upper() == spacecraft.upper()]
             .copy()
             .sort_values("chan_id")
         )
 
-        # Agrega rangos por canal (por si hay filas repetidas de un mismo chan)
         def _parse_ranges(s):
             seq = ast.literal_eval(str(s).replace("'", '"'))
             out = []
@@ -301,11 +308,8 @@ class DatasetsToParquet:
             if "num_values" in df_lab.columns:
                 len_dict[chan] = int(row["num_values"])
 
-        # Canales válidos por CSV (y exclusiones)
         valid_chans_csv_order = [c for c in df_lab["chan_id"].astype(str).tolist() if c not in exclude_channels]
-        valid_set = set(valid_chans_csv_order)
 
-        # Archivos presentes y canales disponibles (intersección con válidos, preserva orden del CSV)
         train_present = {os.path.splitext(f)[0] for f in os.listdir(train_dir) if f.lower().endswith(".npy")}
         test_present  = {os.path.splitext(f)[0] for f in os.listdir(test_dir)  if f.lower().endswith(".npy")}
         train_chans = [c for c in valid_chans_csv_order if c in train_present]
@@ -317,21 +321,20 @@ class DatasetsToParquet:
                 arr = arr.reshape(-1, 1)
             return arr.astype(np.float32, copy=False)
 
-        # TRAIN concatenado (anomaly=0)
+        # TRAIN
         train_parts = []
         for chan in train_chans:
             arr = _load_npy_float32(os.path.join(train_dir, chan + ".npy"))
-            if chan in len_dict and len_dict[chan] != arr.shape[0]:
-                print(f"[!] Longitud distinta en {chan} (csv={len_dict[chan]}, npy={arr.shape[0]})")
             df = pd.DataFrame(arr, columns=[f"f{i+1}" for i in range(arr.shape[1])])
             df.insert(0, "timestamp", np.arange(len(df), dtype=np.int64))
             df.insert(1, "channel", chan)
             df["anomaly"] = 0
             df["spacecraft"] = spacecraft
+            df["split"] = "train"
             train_parts.append(df)
         df_train = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
 
-        # TEST concatenado con etiquetas (rangos inclusivos) y split 60/40 por orden global (CSV)
+        # TEST
         test_parts = []
         for chan in test_chans:
             arr = _load_npy_float32(os.path.join(test_dir, chan + ".npy"))
@@ -352,80 +355,107 @@ class DatasetsToParquet:
         cut = int(len(df_test_full) * 0.6)
         df_val  = df_test_full.iloc[:cut].copy()
         df_test = df_test_full.iloc[cut:].copy()
+        df_val["split"] = "val"
+        df_test["split"] = "test"
 
-        # Guardado por nave
+        # Concatenar todo
+        df_all = pd.concat([df_train, df_val, df_test], axis=0).reset_index(drop=True)
+
+        # Guardar único data.parquet
         outdir = os.path.join(self.output_path, spacecraft)
         os.makedirs(outdir, exist_ok=True)
-        self._save_to_parquet(df_train, os.path.join(outdir, "training.parquet"))
-        self._save_to_parquet(df_val,   os.path.join(outdir, "validation.parquet"))
-        self._save_to_parquet(df_test,  os.path.join(outdir, "test.parquet"))
+        self._save_to_parquet(df_all, os.path.join(outdir, "data.parquet"))
+
+        print(f"[✓] Dataset {spacecraft} procesado y guardado en {outdir}/data.parquet")
 
 
-def inspect_parquet(folder: str, split: str = "training", n: int = 5):
+
+def inspect_parquet(folder: str, split: str = None, n: int = 5):
     """
-    Lee un parquet guardado en `folder` y muestra información básica.
-
+    Lee un único data.parquet en `folder` y muestra información básica.
+    
     Args:
-        folder (str): Ruta a la carpeta donde están los parquet (ej: data/SMAP).
-        split (str): Uno de {"training", "validation", "test"}.
+        folder (str): Ruta a la carpeta donde está el parquet (ej: data/BATADAL).
+        split (str): Uno de {"train", "val", "test"} o None para todo el dataset.
         n (int): Número de filas a mostrar como ejemplo.
-
+    
     Returns:
-        df (pd.DataFrame): El dataframe cargado.
+        df (pd.DataFrame): El DataFrame cargado (filtrado por split si aplica).
     """
-    path = os.path.join(folder, f"{split}.parquet")
+    path = os.path.join(folder, "data.parquet")
     if not os.path.exists(path):
         print(f"[!] No existe el archivo {path}")
         return None
 
     df = pd.read_parquet(path)
 
-    print(f"\n[✓] {split.upper()} cargado desde {path}")
+    if split is not None and "split" in df.columns:
+        df = df[df["split"] == split].copy()
+
+    print(f"\n[✓] {('todo el dataset' if split is None else split.upper())} cargado desde {path}")
     print(f"   - Filas: {len(df)}")
     print(f"   - Columnas: {list(df.columns)}")
     if "anomaly" in df.columns:
         print(f"   - Conteo anomalías: {df['anomaly'].sum()} de {len(df)} "
-            f"({100*df['anomaly'].mean():.2f}%)")
+              f"({100*df['anomaly'].mean():.2f}%)")
     print("\n[Vista previa]")
     print(df.head(n))
     return df
 
-def load_project_parquets(folder: str):
-    """
-    Carga los tres splits (training, validation, test) de un dataset en formato parquet.
 
+def load_project_parquets(folder: str, splits: bool = False):
+    """
+    Carga un único data.parquet. 
+    
     Args:
-        folder (str): Ruta a la carpeta donde están los parquet (ej: data/SMAP).
-
+        folder (str): Ruta a la carpeta donde está el parquet (ej: data/BATADAL).
+        splits (bool): 
+            - False (por defecto): devuelve el DataFrame completo.
+            - True: devuelve (df_train, df_val, df_test) según la columna 'split'.
+    
     Returns:
-        dict: Diccionario con DataFrames para cada split.
+        - df (pd.DataFrame) si splits=False
+        - (df_train, df_val, df_test) si splits=True
     """
-    splits = ["training", "validation", "test"]
-    data = {}
-    for split in splits:
-        path = os.path.join(folder, f"{split}.parquet")
-        if os.path.exists(path):
-            df = pd.read_parquet(path)
-            data[split] = df
-            print(f"[✓] {split} cargado desde {path} ({len(df)} filas)")
-        else:
-            print(f"[!] No existe el archivo {path}")
-            data[split] = None
-    return data["training"], data["validation"], data["test"]
+    path = os.path.join(folder, "data.parquet")
+    if not os.path.exists(path):
+        print(f"[!] No existe el archivo {path}")
+        return None if not splits else (None, None, None)
+
+    df = pd.read_parquet(path)
+    print(f"[✓] DATA cargado desde {path} ({len(df)} filas)")
+
+    if not splits:
+        return df
+
+    if "split" not in df.columns:
+        raise ValueError("El parquet no contiene columna 'split' necesaria para separar.")
+
+    df_train = df[df["split"] == "train"].copy()
+    df_val   = df[df["split"] == "val"].copy()
+    df_test  = df[df["split"] == "test"].copy()
+
+    print(f"   - Train: {len(df_train)} filas")
+    print(f"   - Val:   {len(df_val)} filas")
+    print(f"   - Test:  {len(df_test)} filas")
+
+    return df_train, df_val, df_test
+
 
 if __name__ == "__main__":
 
-    dataset = "WADI"
+    dataset = "BATADAL"
 
     DatasetsToParquet(
         dataset_name=dataset,
-        input_path="../",  
-        output_path="./data"
     ).convert()
 
-    inspect_parquet(f'data/{dataset}', "training")
-    inspect_parquet(f'data/{dataset}', "validation")
-    inspect_parquet(f'data/{dataset}', "test")
+    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\SMAP')
+    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\MSL')
+    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\EbayRanSynCoders')
+    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\SKAB')
+    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\BATADAL')
+    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\WADI')
 
     # data = load_project_parquets("data/WADI")
 

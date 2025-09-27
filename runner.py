@@ -1,6 +1,5 @@
 from utils import generate_synthetic_timeseries
-from modelos.isolation_forest import IsolationForest
-from modelos.varima import VARIMADetector
+from modelos.IsolationForest import IsolationForest
 from sklearn.metrics import classification_report, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 
@@ -34,6 +33,5 @@ class Experiment:
 
 if __name__ == "__main__":
     exp1 = Experiment(IsolationForest, {"n_trees": 100, "sample_size": 256, "contamination": 0.05})
-    exp2 = Experiment(VARIMADetector, {"order": (1,0), "d": 0, "contamination": 0.05})
     
     

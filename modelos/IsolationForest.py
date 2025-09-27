@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 from datasets_to_parquet import load_project_parquets
+from base import BaseAnomalyDetector
 
 def harmonic_number(n):
     if n <= 1:
@@ -60,7 +61,7 @@ class iTree:
 # ------------------------------
 import numpy as np
 
-class IsolationForest:
+class IsolationForest(BaseAnomalyDetector):
     """
     Isolation Forest clásico con una única política de umbral:
         - Si contamination is None  -> umbral fijo tau = 0.5
@@ -125,7 +126,6 @@ class IsolationForest:
         """
         tau = threshold if threshold is not None else self.threshold_
         return self.anomaly_score(X) >= tau
-
 
 if __name__ == "__main__":
     # Ruta al dataset procesado

@@ -42,13 +42,21 @@ def run_experiment(
         results.update(kwargs)
         grid_results.append(results)
 
+    # 2. Construir DataFrame de validación
     df_results = pd.DataFrame(grid_results)
 
-    # 2. Selección top-k
+    # Asegurar orden de columnas: primero métricas, luego hiperparámetros
+    metric_cols = list(metrics.keys())
+    param_cols = list(param_grid.keys())
+    column_order = metric_cols + param_cols
+    df_results = df_results[column_order]
+
+    # 3. Selección top-k
     df_sorted = df_results.sort_values(by=sort_metric, ascending=False)
     topk = df_sorted.head(top_k)
+    topk = topk[column_order]  # mismo orden
 
-    # 3. Evaluación en test
+    # 4. Evaluación en test
     final_results = []
     for _, row in topk.iterrows():
         kwargs = {k: row[k] for k in param_grid.keys()}
@@ -64,7 +72,7 @@ def run_experiment(
         final_results.append(res)
 
         if plot_results:
-            # ROC
+            # Curva ROC
             fpr, tpr, _ = roc_curve(y_test, y_score)
             roc_auc_val = auc(fpr, tpr)
 
@@ -101,16 +109,20 @@ def run_experiment(
                 plt.show()
 
     df_final = pd.DataFrame(final_results)
+    df_final = df_final[column_order]
 
-    # 4. Mostrar resultados en orden correcto
+    # 5. Mostrar resultados en orden correcto
     if plot_results:
+        pd.set_option("display.max_columns", None)  # mostrar todas las columnas
+        pd.set_option("display.width", 200)
+
         print("Resultados de validación (grid search en train+val):")
         display(df_results.round(3))
 
         print("="*60)
         print(f"Top {top_k} configuraciones (ordenadas por {sort_metric} en validación):")
         print("="*60)
-        display(topk)
+        display(topk.round(3))
 
         print("="*60)
         print("Resultados finales en TEST (top-5 configs):")

@@ -142,7 +142,7 @@ class AutoencoderDetector(BaseAnomalyDetector):
                 msg = f"[Epoch {self.total_epochs_trained}] Train Loss={epoch_loss:.6f}"
                 if val_loss is not None:
                     msg += f" | Val Loss={val_loss:.6f}"
-                print(msg)
+                print(msg, end="\r", flush=True)
 
             # Early stopping
             if self.early_stopping and X_val is not None:

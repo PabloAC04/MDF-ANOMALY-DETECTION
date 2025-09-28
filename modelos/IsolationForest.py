@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
-from datasets_to_parquet import load_project_parquets
-from base import BaseAnomalyDetector
+from modelos.datasets_to_parquet import load_project_parquets
+from modelos.base import BaseAnomalyDetector
 
 def harmonic_number(n):
     if n <= 1:
@@ -83,6 +83,7 @@ class IsolationForest(BaseAnomalyDetector):
         self.threshold_ = None  # se fija en fit()
 
     def fit(self, X):
+        X = np.asarray(X)
         self.trees = []
         n = len(X)
         height_limit = int(np.ceil(np.log2(max(self.sample_size, 2))))
@@ -109,6 +110,7 @@ class IsolationForest(BaseAnomalyDetector):
         return self
 
     def anomaly_score(self, X):
+        X = np.asarray(X)
         scores = np.zeros(len(X), dtype=float)
         denom = c_factor(self.sample_size)
         if denom <= 0:
@@ -124,6 +126,7 @@ class IsolationForest(BaseAnomalyDetector):
         Si 'threshold' se pasa aquí, tiene prioridad para pruebas puntuales.
         En otro caso se usa self.threshold_ fijado en fit().
         """
+        X = np.asarray(X)
         tau = threshold if threshold is not None else self.threshold_
         return self.anomaly_score(X) >= tau
 

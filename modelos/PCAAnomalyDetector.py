@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 from .base import BaseAnomalyDetector  
 
 class PCAAnomalyDetector(BaseAnomalyDetector):
@@ -12,36 +13,49 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         self.n_components = n_components
         self.threshold = threshold
         self.pca = None
-        self.mean_ = None
+        self.scaler = None
         self._threshold_value = None
 
-    def fit(self, X):
-        self.mean_ = np.mean(X, axis=0)
-        self.pca = PCA(n_components=self.n_components)
-        self.pca.fit(X)
+    def preprocess(self, X):
+        """
+        Estandariza los datos (media=0, varianza=1) para que
+        ninguna señal domine en el PCA.
+        """
+        X = np.asarray(X)
+        if self.scaler is None:
+            self.scaler = StandardScaler()
+            return self.scaler.fit_transform(X)
+        else:
+            return self.scaler.transform(X)
 
-        errors = self._reconstruction_error(X)
-        q = self.threshold if self.threshold is not None else 0.997 # como 3*std en una normal
+    def fit(self, X):
+        X_proc = self.preprocess(X)
+        self.pca = PCA(n_components=self.n_components)
+        self.pca.fit(X_proc)
+
+        errors = self._reconstruction_error(X_proc)
+        q = self.threshold if self.threshold is not None else 0.997  # como 3*std aprox
         self._threshold_value = np.quantile(errors, q)
 
     def predict(self, X):
         """
-        Devuelve etiquetas: 1 = normal, -1 = anómalo
+        Devuelve etiquetas: 0 = normal, 1 = anómalo
         """
-        errors = self._reconstruction_error(X)
+        X_proc = self.preprocess(X)
+        errors = self._reconstruction_error(X_proc)
         return np.where(errors > self._threshold_value, 1, 0)
 
     def anomaly_score(self, X):
         """
         Devuelve el error de reconstrucción (mayor = más anómalo)
         """
-        return self._reconstruction_error(X)
+        X_proc = self.preprocess(X)
+        return self._reconstruction_error(X_proc)
 
-    def _reconstruction_error(self, X):
+    def _reconstruction_error(self, X_proc):
         """
-        Calcula el error de reconstrucción de cada muestra.
+        Calcula el error de reconstrucción de cada muestra (ya preprocesada).
         """
-        X_centered = X - self.mean_
-        X_projected = self.pca.inverse_transform(self.pca.transform(X_centered))
-        errors = np.mean((X_centered - X_projected) ** 2, axis=1)
+        X_projected = self.pca.inverse_transform(self.pca.transform(X_proc))
+        errors = np.mean((X_proc - X_projected) ** 2, axis=1)
         return np.asarray(errors)

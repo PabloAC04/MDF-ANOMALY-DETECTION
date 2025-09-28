@@ -44,42 +44,72 @@ class ValidationPipeline:
         self.seasonal_period = seasonal_period
         self.hampel_cfg = hampel_cfg or {}
 
-    # ---------------------
+        # ---------------------
     # División temporal
     # ---------------------
     def _make_splits_tscv(self, T: int) -> List[Tuple[np.ndarray, np.ndarray]]:
-        L_train_min = self.params.get("L_train_min", 60)
-        L_val = self.params.get("L_val", 30)
-        G = self.params.get("G", 0)
-        S = self.params.get("S", L_val)
+        """
+        Time Series Cross-Validation (ventana expansiva)
+        - P_train: porcentaje inicial para entrenamiento
+        - num_windows: número de ventanas de validación
+        """
+        P_train = self.params.get("P_train", 0.5)
+        num_windows = self.params.get("num_windows", 10)
+
+        # tamaño inicial de train
+        L_train = int(P_train * T)
+        if L_train <= 0 or L_train >= T:
+            return []
+
+        # tamaño de cada bloque de validación
+        L_val = (T - L_train) // num_windows
+        if L_val <= 0:
+            return []
 
         splits = []
-        t_j = L_train_min - 1
-        while t_j + G + L_val < T:
-            train_idx = np.arange(0, t_j + 1)
-            val_idx = np.arange(t_j + G + 1, t_j + G + L_val + 1)
+        start_val = L_train
+        for w in range(num_windows):
+            end_val = start_val + L_val
+            if end_val > T:
+                break
+            train_idx = np.arange(0, start_val)  # ventana expansiva: acumula todo hasta inicio de val
+            val_idx = np.arange(start_val, end_val)
             splits.append((train_idx, val_idx))
-            t_j += S
+            start_val = end_val
         return splits
+
 
     def _make_splits_wf(self, T: int) -> List[Tuple[np.ndarray, np.ndarray]]:
-        L_train0 = self.params.get("L_train0", 60)
-        L_blk = self.params.get("L_blk", 30)
+        """
+        Walkforward validation (bloques sucesivos)
+        - P_train: porcentaje inicial para entrenamiento
+        - num_windows: número de ventanas de validación
+        """
+        P_train = self.params.get("P_train", 0.5)
+        num_windows = self.params.get("num_windows", 10)
 
-        blocks = []
-        start = 0
-        blocks.append((0, L_train0 - 1))  # B0
-        start = L_train0
-        while start + L_blk <= T:
-            blocks.append((start, start + L_blk - 1))
-            start += L_blk
+        # tamaño inicial de train
+        L_train0 = int(P_train * T)
+        if L_train0 <= 0 or L_train0 >= T:
+            return []
+
+        # tamaño de cada bloque de validación
+        L_blk = (T - L_train0) // num_windows
+        if L_blk <= 0:
+            return []
 
         splits = []
-        for j in range(len(blocks) - 1):
-            tr_idx = np.arange(blocks[j][0], blocks[j][1] + 1)
-            va_idx = np.arange(blocks[j+1][0], blocks[j+1][1] + 1)
+        start = L_train0
+        for w in range(num_windows):
+            end = start + L_blk
+            if end > T:
+                break
+            tr_idx = np.arange(0, start)    # siempre desde el inicio hasta antes del bloque
+            va_idx = np.arange(start, end)  # siguiente bloque
             splits.append((tr_idx, va_idx))
+            start = end
         return splits
+
 
     # ---------------------
     # Limpieza Hampel
@@ -119,7 +149,6 @@ class ValidationPipeline:
         splits = (
             self._make_splits_tscv(T) if self.mode == "tscv" else self._make_splits_wf(T)
         )
-
         scores = {m: [] for m in self.metrics}
 
         for tr_idx, va_idx in splits:

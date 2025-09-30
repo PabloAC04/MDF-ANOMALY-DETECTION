@@ -25,16 +25,15 @@ class OneClassSVMDetector(BaseAnomalyDetector):
         self.kernel = kernel
         self.gamma = gamma
         self.use_scaler = use_scaler
+        self.is_fitted = False
 
         self.model = OneClassSVM(nu=self.nu, kernel=self.kernel, gamma=self.gamma)
         self.scaler = StandardScaler() if self.use_scaler else None
-        self.is_fitted = False
 
-    def preprocess(self, X):
-        """Aplica normalización si se ha configurado el scaler."""
-        X = np.asarray(X)
-        if self.scaler is not None:
-            if not self.is_fitted:
+    def preprocess(self, X, retrain=True):
+        X = np.asarray(X, dtype=np.float32)
+        if self.scaler:
+            if retrain:
                 return self.scaler.fit_transform(X)
             else:
                 return self.scaler.transform(X)
@@ -42,8 +41,7 @@ class OneClassSVMDetector(BaseAnomalyDetector):
 
     def fit(self, X):
         """Entrena el modelo One-Class SVM sobre los datos X."""
-        X_proc = self.preprocess(X)
-        self.model.fit(X_proc)
+        self.model.fit(X)
         self.is_fitted = True
         return self
 
@@ -54,8 +52,7 @@ class OneClassSVMDetector(BaseAnomalyDetector):
         """
         if not self.is_fitted:
             raise RuntimeError("El modelo debe ser entrenado con fit() antes de predecir.")
-        X_proc = self.preprocess(X)
-        y_pred = self.model.predict(X_proc)
+        y_pred = self.model.predict(X)
 
         return np.where(y_pred == -1, 1, 0) # Convertir etiquetas: 1 -> 0 (normal), -1 -> 1 (anómalo)
 
@@ -66,7 +63,6 @@ class OneClassSVMDetector(BaseAnomalyDetector):
         """
         if not self.is_fitted:
             raise RuntimeError("El modelo debe ser entrenado con fit() antes de calcular scores.")
-        X_proc = self.preprocess(X)
-        scores = self.model.decision_function(X_proc)
+        scores = self.model.decision_function(X)
 
         return -scores

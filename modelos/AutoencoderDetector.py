@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.preprocessing import StandardScaler
 
+
 from modelos.base import BaseAnomalyDetector
 
 
@@ -32,7 +33,7 @@ class Autoencoder(nn.Module):
 
 class AutoencoderDetector(BaseAnomalyDetector):
     def __init__(self, input_dim, latent_dim=8, lr=1e-3, epochs=50, batch_size=32,
-                 use_scaler=True, device=None, verbose=True,
+                 use_scaler=True, device=None, verbose=False,
                  early_stopping=True, patience=5, delta=1e-4):
         """
         Detector de anomalías basado en Autoencoder (PyTorch).
@@ -85,10 +86,10 @@ class AutoencoderDetector(BaseAnomalyDetector):
         self.patience = patience
         self.delta = delta
 
-    def preprocess(self, X):
+    def preprocess(self, X, retrain=True):
         X = np.asarray(X, dtype=np.float32)
         if self.scaler:
-            if not self.is_fitted:
+            if retrain:
                 return self.scaler.fit_transform(X)
             else:
                 return self.scaler.transform(X)
@@ -100,16 +101,14 @@ class AutoencoderDetector(BaseAnomalyDetector):
         Si se llama varias veces, el entrenamiento continúa (incremental).
         Admite early stopping si se pasa un conjunto de validación.
         """
-        X_proc = self.preprocess(X)
-        X_tensor = torch.tensor(X_proc, dtype=torch.float32).to(self.device)
+        X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
 
         dataset = torch.utils.data.TensorDataset(X_tensor)
         loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
         # Validación
         if X_val is not None:
-            X_val_proc = self.preprocess(X_val)
-            X_val_tensor = torch.tensor(X_val_proc, dtype=torch.float32).to(self.device)
+            X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(self.device)
 
         best_val_loss = np.inf
         epochs_no_improve = 0
@@ -175,8 +174,7 @@ class AutoencoderDetector(BaseAnomalyDetector):
     def anomaly_score(self, X):
         if not self.is_fitted:
             raise RuntimeError("El modelo debe ser entrenado con fit() antes de calcular scores.")
-        X_proc = self.preprocess(X)
-        X_tensor = torch.tensor(X_proc, dtype=torch.float32).to(self.device)
+        X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
         self.model.eval()
         with torch.no_grad():
             recon = self.model(X_tensor)

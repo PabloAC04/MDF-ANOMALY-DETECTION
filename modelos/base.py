@@ -13,6 +13,6 @@ class BaseAnomalyDetector(ABC):
     def anomaly_score(self, X):
         pass
 
-    def preprocess(self, X):
+    def preprocess(self, X, retrain=False):
         return X
 

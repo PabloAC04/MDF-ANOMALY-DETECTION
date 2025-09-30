@@ -36,46 +36,44 @@ class DatasetsToParquet:
     def _process_batadal(self):
         print("[...] Procesando dataset BATADAL")
 
-        dataset1 = os.path.join(self.input_path, "BATADAL", "BATADAL_dataset03.csv")  # train (sin anomalías)
-        dataset2 = os.path.join(self.input_path, "BATADAL", "BATADAL_dataset04.csv")  # con anomalías
+        # Rutas de los ficheros de entrenamiento y con anomalías
+        dataset1 = os.path.join(self.input_path, "BATADAL", "BATADAL_dataset03.csv")
+        dataset2 = os.path.join(self.input_path, "BATADAL", "BATADAL_dataset04.csv")
 
-        # Cargar
+        # Cargar ficheros CSV
         df1 = pd.read_csv(dataset1, sep=",", decimal=".")
         df2 = pd.read_csv(dataset2, sep=",", decimal=".")
 
-        # Quitar espacios de cabeceras
+        # Normalizar cabeceras
         df1.columns = df1.columns.str.strip()
         df2.columns = df2.columns.str.strip()
 
-        # Renombrar columnas
-        if "DATETIME" in df1.columns:
-            df1.rename(columns={"DATETIME": "timestamp"}, inplace=True)
-        if "DATETIME" in df2.columns:
-            df2.rename(columns={"DATETIME": "timestamp"}, inplace=True)
+        # Ajuste de columnas relevantes
+        df1.rename(columns={"DATETIME": "timestamp"}, inplace=True)
+        df2.rename(columns={"DATETIME": "timestamp"}, inplace=True)
         if "ATT_FLAG" in df1.columns:
-            df1.drop(columns=["ATT_FLAG"], inplace=True)  # no tiene sentido en train
+            df1.drop(columns=["ATT_FLAG"], inplace=True)
         if "ATT_FLAG" in df2.columns:
             df2.rename(columns={"ATT_FLAG": "anomaly"}, inplace=True)
 
-        # Cambiar -999 -> 0 SOLO en anomaly
+        # Corrección de valores de anomalía
         if "anomaly" in df2.columns:
             df2["anomaly"] = df2["anomaly"].replace(-999, 0)
 
-        # --- Añadir columna 'split' ---
-        df1["anomaly"] = 0  # dataset1 es training sin anomalías
+        # Asignación de splits
+        df1["anomaly"] = 0
         df1["split"] = "train"
-
         validation_size = int(len(df2) * 0.6)
         validation_df = df2.iloc[:validation_size].copy()
         test_df = df2.iloc[validation_size:].copy()
-
         validation_df["split"] = "val"
         test_df["split"] = "test"
 
-        # Concatenar todo
+        # Concatenación de todos los subconjuntos
         df_all = pd.concat([df1, validation_df, test_df], axis=0).reset_index(drop=True)
 
-        # Guardar en único parquet
+        # Normalización de columnas y guardado en parquet
+        df_all = self._normalize_columns(df_all)
         folder_save = os.path.join(self.output_path, "BATADAL")
         os.makedirs(folder_save, exist_ok=True)
         self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
@@ -85,45 +83,40 @@ class DatasetsToParquet:
     def _process_skab(self):
         print("[...] Procesando dataset SKAB")
 
+        # Cargar conjunto de entrenamiento (sin anomalías)
         dataset_train = os.path.join(self.input_path, "SKAB", "anomaly-free", "anomaly-free.csv")
-
-        # Cargar dataset de entrenamiento
         df_train = pd.read_csv(dataset_train, sep=";", decimal=".")
-        df_train.rename(columns={"DATETIME": "timestamp"}, inplace=True)
-
-        df_train["anomaly"] = 0   # entrenamiento sin anomalías
+        df_train.rename(columns={"datetime": "timestamp"}, inplace=True)
+        df_train["anomaly"] = 0
         df_train["split"] = "train"
 
-        # Cargar datasets de test/val (concatenados)
-        test_val_paths = [
-            "0.csv", "1.csv", "2.csv", "3.csv", "4.csv", "5.csv", "6.csv", "7.csv",
-            "8.csv", "9.csv", "10.csv", "11.csv", "12.csv", "13.csv", "14.csv", "15.csv"
-        ]
+        # Cargar y unir los ficheros de validación y test
+        test_val_paths = [f"{i}.csv" for i in range(16)]
+        df_test_val = pd.concat(
+            [
+                pd.read_csv(os.path.join(self.input_path, "SKAB", "valve1", path), sep=";", decimal=".")
+                .rename(columns={"datetime": "timestamp"})
+                for path in test_val_paths
+            ],
+            ignore_index=True
+        )
 
-        df_test_val = pd.DataFrame()
-
-        for path in test_val_paths:
-            full_path = os.path.join(self.input_path, "SKAB", "valve1", path)
-            df_test_val_sub = pd.read_csv(full_path, sep=";", decimal=".")
-            df_test_val_sub.rename(columns={"DATETIME": "timestamp"}, inplace=True)
-            df_test_val = pd.concat([df_test_val, df_test_val_sub], ignore_index=True)
-
-        # Quitar columna "changepoint" si existe
+        # Eliminar columna auxiliar si existe
         if "changepoint" in df_test_val.columns:
             df_test_val.drop(columns=["changepoint"], inplace=True)
 
-        # Split 60% val / 40% test
+        # División en validación y test
         validation_size = int(len(df_test_val) * 0.6)
         validation_df = df_test_val.iloc[:validation_size].copy()
         test_df = df_test_val.iloc[validation_size:].copy()
-
         validation_df["split"] = "val"
         test_df["split"] = "test"
 
-        # Concatenar todo
+        # Concatenar en un único DataFrame
         df_all = pd.concat([df_train, validation_df, test_df], axis=0).reset_index(drop=True)
 
-        # Guardar único data.parquet
+        # Normalizar columnas y guardar en parquet
+        df_all = self._normalize_columns(df_all)
         folder_save = os.path.join(self.output_path, "SKAB")
         os.makedirs(folder_save, exist_ok=True)
         self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
@@ -140,60 +133,55 @@ class DatasetsToParquet:
     def _process_wadi(self):
         print("[...] Procesando dataset WADI")
 
+        # Rutas de los ficheros de entrenamiento y de ataques
         training_file = os.path.join(self.input_path, "WADI", "WADI_14days_new.csv")
         attack_file = os.path.join(self.input_path, "WADI", "WADI_attackdataLABLE.csv")
 
-        # Leer datasets
+        # Cargar ficheros CSV
         df_train = pd.read_csv(training_file, low_memory=False)
         df_attack = pd.read_csv(attack_file, skiprows=1, low_memory=False)
 
-        # Limpiar nombres de columnas
+        # Normalizar cabeceras
         df_train.columns = df_train.columns.str.strip()
         df_attack.columns = df_attack.columns.str.strip()
 
-        # Eliminar columnas innecesarias
+        # Eliminar columnas auxiliares
         for df in [df_train, df_attack]:
             for col in ["Row", "Row "]:
                 if col in df.columns:
                     df.drop(columns=[col], inplace=True)
 
-        # Crear columna 'timestamp'
+        # Crear columna de tiempo unificada
         df_train["timestamp"] = pd.to_datetime(
             df_train["Date"] + " " + df_train["Time"],
-            format="%m/%d/%y %M:%S.%f",
-            errors="coerce"
+            format="%m/%d/%Y %H:%M.%f", errors="coerce"
         )
         df_attack["timestamp"] = pd.to_datetime(
             df_attack["Date"] + " " + df_attack["Time"],
-            format="%m/%d/%y %M:%S.%f",
-            errors="coerce"
+            format="%m/%d/%Y %H:%M.%f", errors="coerce"
         )
-
-        # Eliminar columnas originales Date/Time
         df_train.drop(columns=["Date", "Time"], inplace=True)
         df_attack.drop(columns=["Date", "Time"], inplace=True)
 
-        # Renombrar y ajustar etiquetas de anomalía
+        # Ajustar etiquetas de anomalía
         label_col = "Attack LABLE (1:No Attack, -1:Attack)"
         if label_col in df_attack.columns:
             df_attack.rename(columns={label_col: "anomaly"}, inplace=True)
             df_attack["anomaly"] = df_attack["anomaly"].replace({1: 0, -1: 1})
-
-        # Asegurar columna anomaly en df_train (entrenamiento sin ataques)
         df_train["anomaly"] = 0
 
-        # Añadir columna 'split'
+        # Definir splits
         df_train["split"] = "train"
         val_size = int(len(df_attack) * 0.6)
         df_val = df_attack.iloc[:val_size].copy()
         df_test = df_attack.iloc[val_size:].copy()
-        df_val["split"] = "val"
-        df_test["split"] = "test"
+        df_val["split"], df_test["split"] = "val", "test"
 
-        # Concatenar todo en un solo DataFrame
+        # Unir en un único DataFrame
         df_all = pd.concat([df_train, df_val, df_test], axis=0).reset_index(drop=True)
 
-        # Guardar único data.parquet
+        # Normalizar columnas y guardar en parquet
+        df_all = self._normalize_columns(df_all)
         folder_save = os.path.join(self.output_path, "WADI")
         os.makedirs(folder_save, exist_ok=True)
         self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
@@ -204,42 +192,40 @@ class DatasetsToParquet:
     def _process_EbayRanSynCoders(self):
         print("[...] Procesando dataset EbayRanSynCoders")
 
+        # Rutas de los ficheros principales
         base_path = os.path.join(self.input_path, "RANSynCoders-main", "data")
         train_path = os.path.join(base_path, "train.csv")
         test_path = os.path.join(base_path, "test.csv")
         labels_path = os.path.join(base_path, "test_label.csv")
 
-        # Leer archivos
+        # Cargar datasets
         df_train = pd.read_csv(train_path)
         df_test = pd.read_csv(test_path)
         df_labels = pd.read_csv(labels_path)
 
-        # Renombrar columna de tiempo
+        # Ajuste de columna de tiempo
         df_train.rename(columns={"timestamp_(min)": "timestamp"}, inplace=True)
         df_test.rename(columns={"timestamp_(min)": "timestamp"}, inplace=True)
 
-        # Unir etiquetas de test
-        df_test = df_test.merge(
-            df_labels.rename(columns={"timestamp_(min)": "timestamp", "label": "anomaly"}),
-            on="timestamp",
-            how="left"
-        )
+        # Incorporar etiquetas de anomalía en test
+        df_labels = df_labels.rename(columns={"timestamp_(min)": "timestamp", "label": "anomaly"})
+        df_test = df_test.merge(df_labels, on="timestamp", how="left")
 
-        # Asegurar columna anomaly en train (sin anomalías conocidas)
+        # Definir anomalías en train (ninguna)
         df_train["anomaly"] = 0
 
-        # Añadir columna split
+        # Asignación de splits
         df_train["split"] = "train"
         val_size = int(len(df_test) * 0.6)
         df_val = df_test.iloc[:val_size].copy()
         df_test_final = df_test.iloc[val_size:].copy()
-        df_val["split"] = "val"
-        df_test_final["split"] = "test"
+        df_val["split"], df_test_final["split"] = "val", "test"
 
-        # Concatenar todo en un único DataFrame
+        # Concatenar en un único DataFrame
         df_all = pd.concat([df_train, df_val, df_test_final], axis=0).reset_index(drop=True)
 
-        # Guardar en un único data.parquet
+        # Normalizar columnas y guardar parquet
+        df_all = self._normalize_columns(df_all)
         folder_save = os.path.join(self.output_path, "EbayRanSynCoders")
         os.makedirs(folder_save, exist_ok=True)
         self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
@@ -265,21 +251,15 @@ class DatasetsToParquet:
 
     def _process_smap_msl_generic(self, dataset_folder: str, spacecraft: str, exclude_channels: set):
         """
-        Entrada (compartida):
-            {input_path}/{dataset_folder}/
-                ├── labeled_anomalies.csv  (spacecraft ∈ {SMAP, MSL})
-                └── data/data/
-                    ├── train/*.npy
-                    └── test/*.npy
-
-        Salida (un único data.parquet con splits):
-            {output_path}/{spacecraft}/data.parquet
+        Procesa datasets SMAP o MSL en formato común:
+        lectura de npy, asignación de etiquetas, división en splits y guardado en parquet.
         """
+        # Definir rutas principales
         root = os.path.join(self.input_path, dataset_folder)
         data_dir = os.path.join(root, "data", "data")
-        train_dir = os.path.join(data_dir, "train")
-        test_dir  = os.path.join(data_dir, "test")
+        train_dir, test_dir = os.path.join(data_dir, "train"), os.path.join(data_dir, "test")
 
+        # Leer etiquetas de anomalías
         lab_csv = os.path.join(root, "labeled_anomalies.csv")
         if not os.path.exists(lab_csv):
             raise FileNotFoundError(f"No se encuentra {lab_csv}")
@@ -291,82 +271,99 @@ class DatasetsToParquet:
             .sort_values("chan_id")
         )
 
+        # Función para parsear rangos de anomalía
         def _parse_ranges(s):
             seq = ast.literal_eval(str(s).replace("'", '"'))
             out = []
             for pair in seq:
                 if isinstance(pair, (list, tuple)) and len(pair) == 2:
                     a, b = int(pair[0]), int(pair[1])
-                    if b < a: a, b = b, a
+                    if b < a: 
+                        a, b = b, a
                     out.append((a, b))
             return out
 
-        ranges_dict, len_dict = {}, {}
+        # Construcción de diccionario de rangos por canal
+        ranges_dict = {}
         for _, row in df_lab.iterrows():
             chan = str(row["chan_id"])
             ranges_dict.setdefault(chan, []).extend(_parse_ranges(row["anomaly_sequences"]))
-            if "num_values" in df_lab.columns:
-                len_dict[chan] = int(row["num_values"])
 
+        # Canales válidos según etiquetas y ficheros disponibles
         valid_chans_csv_order = [c for c in df_lab["chan_id"].astype(str).tolist() if c not in exclude_channels]
-
         train_present = {os.path.splitext(f)[0] for f in os.listdir(train_dir) if f.lower().endswith(".npy")}
         test_present  = {os.path.splitext(f)[0] for f in os.listdir(test_dir)  if f.lower().endswith(".npy")}
         train_chans = [c for c in valid_chans_csv_order if c in train_present]
         test_chans  = [c for c in valid_chans_csv_order if c in test_present]
 
+        # Función de carga segura de arrays
         def _load_npy_float32(path):
             arr = np.load(path)
             if arr.ndim == 1:
                 arr = arr.reshape(-1, 1)
             return arr.astype(np.float32, copy=False)
 
-        # TRAIN
+        # Construcción del conjunto de entrenamiento
         train_parts = []
         for chan in train_chans:
             arr = _load_npy_float32(os.path.join(train_dir, chan + ".npy"))
             df = pd.DataFrame(arr, columns=[f"f{i+1}" for i in range(arr.shape[1])])
             df.insert(0, "timestamp", np.arange(len(df), dtype=np.int64))
-            df.insert(1, "channel", chan)
             df["anomaly"] = 0
-            df["spacecraft"] = spacecraft
             df["split"] = "train"
             train_parts.append(df)
         df_train = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
 
-        # TEST
+        # Construcción del conjunto de test con etiquetas
         test_parts = []
         for chan in test_chans:
             arr = _load_npy_float32(os.path.join(test_dir, chan + ".npy"))
             T = arr.shape[0]
             lab = np.zeros(T, dtype=bool)
             for (ini, fin) in ranges_dict.get(chan, []):
-                ini = max(0, ini); fin = min(T - 1, fin)
+                ini, fin = max(0, ini), min(T - 1, fin)
                 if fin >= ini:
                     lab[ini:fin+1] = True
             df = pd.DataFrame(arr, columns=[f"f{i+1}" for i in range(arr.shape[1])])
             df.insert(0, "timestamp", np.arange(T, dtype=np.int64))
-            df.insert(1, "channel", chan)
             df["anomaly"] = lab.astype(np.int8)
-            df["spacecraft"] = spacecraft
             test_parts.append(df)
-
         df_test_full = pd.concat(test_parts, ignore_index=True) if test_parts else pd.DataFrame()
-        cut = int(len(df_test_full) * 0.6)
-        df_val  = df_test_full.iloc[:cut].copy()
-        df_test = df_test_full.iloc[cut:].copy()
-        df_val["split"] = "val"
-        df_test["split"] = "test"
 
-        # Concatenar todo
+        # División en validación y test
+        cut = int(len(df_test_full) * 0.6)
+        df_val, df_test = df_test_full.iloc[:cut].copy(), df_test_full.iloc[cut:].copy()
+        df_val["split"], df_test["split"] = "val", "test"
+
+        # Unión de todos los subconjuntos
         df_all = pd.concat([df_train, df_val, df_test], axis=0).reset_index(drop=True)
 
-        # Guardar único data.parquet
+        # Eliminación de columnas auxiliares
+        for col in ["channel", "spacecraft"]:
+            if col in df_all.columns:
+                df_all.drop(columns=[col], inplace=True)
+
+        # Normalización de columnas y guardado en parquet
+        df_all = self._normalize_columns(df_all)
         outdir = os.path.join(self.output_path, spacecraft)
         os.makedirs(outdir, exist_ok=True)
         self._save_to_parquet(df_all, os.path.join(outdir, "data.parquet"))
 
         print(f"[✓] Dataset {spacecraft} procesado y guardado en {outdir}/data.parquet")
+
+    def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Reordena columnas al formato estándar:
+        features..., split, timestamp, anomaly
+        """
+        cols = list(df.columns)
+        # Asegurar columnas obligatorias
+        for c in ["split", "timestamp", "anomaly"]:
+            if c not in cols:
+                raise ValueError(f"Falta columna obligatoria: {c}")
+        # Features = todas las demás que no son split/timestamp/anomaly
+        feature_cols = [c for c in cols if c not in ["split", "timestamp", "anomaly"]]
+        return df[feature_cols + ["split", "timestamp", "anomaly"]]
 
 
 
@@ -444,11 +441,18 @@ def load_project_parquets(folder: str, splits: bool = False):
 
 if __name__ == "__main__":
 
-    dataset = "BATADAL"
+    # dataset = "BATADAL"
+    # dataset = "SKAB"
+    # dataset = "WADI"
+    # dataset = "EbayRanSynCoders"
+    # dataset = "SMAP"
+    # dataset = "MSL"
 
-    DatasetsToParquet(
-        dataset_name=dataset,
-    ).convert()
+    # DatasetsToParquet(
+    #     dataset_name=dataset,
+    # ).convert()
+
+    # inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\{dataset}')
 
     inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\SMAP')
     inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\MSL')

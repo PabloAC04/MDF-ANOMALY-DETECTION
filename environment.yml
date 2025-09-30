@@ -1,0 +1,36 @@
+name: anomaly-detection
+channels:
+  - rapidsai
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - rapids=25.08
+  - cuda-version>=12.0,<13.0
+
+  # Paquetes con versiones exactas que pediste
+  - pandas=2.2.3
+  - matplotlib=3.10.3
+  - ipykernel
+  - plotly=6.1.1
+  - ipywidgets=8.1.7
+  - notebook=7.4.3
+  - scikit-learn=1.6.1
+  - seaborn=0.13.2
+  - numpy=1.26.4
+  - statsmodels=0.14.4
+  - pyarrow
+  - fastparquet
+  - tqdm=4.67.1
+
+  # pip para los que no están en conda
+  - pip
+  - pip:
+      - hmmlearn
+      - h2o==3.46.0.7
+      - asammdf==7.3.18
+      # PyTorch CUDA 12.6
+      - torch
+      - torchvision
+      - --extra-index-url https://download.pytorch.org/whl/cu126

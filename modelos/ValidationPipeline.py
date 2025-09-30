@@ -4,6 +4,8 @@ from typing import Callable, Dict, List, Tuple, Union
 from utils import hampel_on_residual
 from statsmodels.tsa.stattools import acf
 
+import warnings
+
 
 class ValidationPipeline:
     def __init__(
@@ -43,6 +45,7 @@ class ValidationPipeline:
         self.params = params or {}
         self.seasonal_period = seasonal_period
         self.hampel_cfg = hampel_cfg or {}
+        warnings.filterwarnings("ignore", category=RuntimeWarning, module="statsmodels")
 
         # ---------------------
     # División temporal
@@ -165,8 +168,8 @@ class ValidationPipeline:
             y_val = y_val.reset_index(drop=True).to_numpy().astype(int)
 
             # Preprocesado específico del modelo
-            X_train_prep = self.model.preprocess(X_train_clean)
-            X_val_prep = self.model.preprocess(X_val)
+            X_train_prep = self.model.preprocess(X_train_clean, retrain=True)
+            X_val_prep = self.model.preprocess(X_val, retrain=False)
 
             # Entrenamiento + predicción
             self.model.fit(X_train_prep)

@@ -127,6 +127,9 @@ def window_coverage_metric(y_true, y_pred, y_score=None):
     """
         Mide % de cobertura por ventana de anomalía.
     """
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+
     n = len(y_true)
     coverages = []
 

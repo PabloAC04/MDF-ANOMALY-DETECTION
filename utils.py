@@ -3,6 +3,10 @@ import pandas as pd
 from typing import Union, Tuple, Optional
 from statsmodels.tsa.seasonal import STL
 
+import cupy as cp
+from cupyx.scipy.ndimage import median_filter
+import cudf
+
 def generate_synthetic_timeseries(
     n: int = 1000,
     train_ratio: float = 0.4,
@@ -236,3 +240,31 @@ def hampel_on_residual(
         mask_df = mask_df.iloc[:, 0]
 
     return (cleaned, mask_df) if return_mask else cleaned
+
+
+def hampel_gpu(x: cp.ndarray, window: int = 25, sigma: float = 5.0, repair: str = "median", shrink_lambda: float = 0.7):
+    """
+    Hampel filter vectorizado en GPU.
+    x: array 1D (cp.ndarray) en GPU.
+    """
+    k = 1.4826
+
+    # 1) Mediana local en ventana
+    med = median_filter(x, size=window, mode="reflect")
+
+    # 2) MAD local
+    mad = k * median_filter(cp.abs(x - med), size=window, mode="reflect")
+
+    # 3) Detectar outliers
+    z = cp.abs(x - med) / (mad + 1e-9)
+    mask = z > sigma
+
+    # 4) Reparar
+    x_clean = x.copy()
+    if repair == "median":
+        x_clean[mask] = med[mask]
+    elif repair == "shrink":
+        x_clean[mask] = (1.0 - shrink_lambda) * x_clean[mask]
+    # (interp lo podemos implementar con cp.interp pero es menos directo)
+
+    return x_clean, mask

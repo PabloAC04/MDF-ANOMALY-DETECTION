@@ -1,6 +1,7 @@
-import numpy as np
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+import cupy as cp
+from cuml.decomposition import PCA
+from cuml.preprocessing import StandardScaler
+import cudf
 from .base import BaseAnomalyDetector  
 
 class PCAAnomalyDetector(BaseAnomalyDetector):
@@ -13,7 +14,7 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         self.n_components = int(n_components) if n_components is not None else None
         self.threshold = threshold
         self.pca = None
-        self.scaler = None
+        self.scaler = StandardScaler(with_mean=True, with_std=True)
         self._threshold_value = None
 
     def preprocess(self, X, retrain=True):
@@ -21,16 +22,16 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         Convierte X a float32 y lo pasa a GPU (cupy).
         Si hay un scaler configurado, lo aplica en CPU antes de mover a GPU.
         """
-        import numpy as np  # solo para CPU scaler
-        X = np.asarray(X, dtype=np.float32)
+        
+        X = X.astype("float32")
 
-        if self.scaler:
-            if retrain:
-                X = self.scaler.fit_transform(X)
-            else:
-                X = self.scaler.transform(X)
+        # aplicar scaler en GPU
+        if retrain:
+            X_scaled = self.scaler.fit_transform(X)
+        else:
+            X_scaled = self.scaler.transform(X)
 
-        return cp.asarray(X)  # mover a GPU
+        return X_scaled
 
     def fit(self, X):
         """
@@ -40,6 +41,7 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         self.pca.fit(X)
 
         errors = self._reconstruction_error(X)
+
         q = self.threshold if self.threshold is not None else 0.997  # ~3*std
         self._threshold_value = cp.quantile(errors, q).item()  # pasar a float CPU
 
@@ -62,4 +64,4 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         """
         X_projected = self.pca.inverse_transform(self.pca.transform(X_proc))
         errors = cp.mean((X_proc - X_projected) ** 2, axis=1)
-        return errors
+        return errors.values

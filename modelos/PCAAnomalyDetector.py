@@ -3,6 +3,7 @@ from cuml.decomposition import PCA
 from cuml.preprocessing import StandardScaler
 import cudf
 from .base import BaseAnomalyDetector  
+import numpy as np
 
 class PCAAnomalyDetector(BaseAnomalyDetector):
     def __init__(self, n_components=None, threshold=None):
@@ -65,3 +66,87 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         X_projected = self.pca.inverse_transform(self.pca.transform(X_proc))
         errors = cp.mean((X_proc - X_projected) ** 2, axis=1)
         return errors.values
+
+
+
+import numpy as np
+
+def candidate_n_components(pca, threshold=0.95, min_candidates=6):
+    """
+    Genera un conjunto de valores candidatos para n_components en PCA
+    usando 4 criterios clásicos y los expande con vecinos cercanos hasta
+    alcanzar al menos 'min_candidates' valores distintos.
+
+    Métodos usados:
+      1. Varianza acumulada mínima (ej. ≥95%)
+      2. Kaiser rule (autovalores > 1)
+      3. Broken Stick Model
+      4. Elbow method
+
+    Parameters
+    ----------
+    pca : cuml.decomposition.PCA o sklearn.decomposition.PCA ya ajustado
+        Modelo PCA entrenado con fit().
+    threshold : float, opcional
+        Nivel de varianza acumulada para el criterio 1. Por defecto 0.95.
+    min_candidates : int, opcional
+        Número mínimo de valores a devolver. Por defecto 6.
+
+    Returns
+    -------
+    list of int
+        Valores únicos de n_components sugeridos, ordenados.
+    """
+
+    # Extraer varianzas explicadas y autovalores en numpy
+    expl_var = pca.explained_variance_ratio_
+    eigenvalues = pca.explained_variance_
+    if hasattr(expl_var, "to_numpy"):  # cudf.Series
+        expl_var = expl_var.to_numpy()
+    elif hasattr(expl_var, "get"):     # cupy.ndarray
+        expl_var = expl_var.get()
+
+    if hasattr(eigenvalues, "to_numpy"):
+        eigenvalues = eigenvalues.to_numpy()
+    elif hasattr(eigenvalues, "get"):
+        eigenvalues = eigenvalues.get()
+
+    n = len(expl_var)
+
+    # 1) Varianza acumulada mínima
+    cum_var = np.cumsum(expl_var)
+    n_var95 = np.argmax(cum_var >= threshold) + 1
+
+    # 2) Kaiser rule
+    n_kaiser = int(np.sum(eigenvalues > 1))
+
+    # 3) Broken Stick
+    broken_stick = np.array([np.sum(1.0/np.arange(k, n+1)) / n for k in range(1, n+1)])
+    n_broken = int(np.sum(expl_var > broken_stick))
+
+    # 4) Elbow method (geométrico)
+    points = np.column_stack((np.arange(1, n+1), cum_var))
+    start, end = points[0], points[-1]
+    line_vec = end - start
+    line_vec_norm = line_vec / np.linalg.norm(line_vec)
+    distances = np.abs(np.cross(points - start, line_vec_norm))
+    n_elbow = int(np.argmax(distances) + 1)
+
+    # Unir sin duplicados
+    base_candidates = sorted(set([n_var95, n_kaiser, n_broken, n_elbow]))
+
+    # Añadir vecinos hacia atrás (n-1, n-2, ...) hasta alcanzar min_candidates
+    candidates = set(base_candidates)
+    for val in base_candidates:
+        for step in [1, 2]:  # vecinos por detrás
+            if val - step >= 1 and len(candidates) < min_candidates:
+                candidates.add(val - step)
+
+    # Si aún faltan valores, añadir hacia adelante (por si el dataset es pequeño)
+    for val in base_candidates:
+        for step in [1, 2]:
+            if val + step <= n and len(candidates) < min_candidates:
+                candidates.add(val + step)
+
+    return sorted(candidates)
+

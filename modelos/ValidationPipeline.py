@@ -1,8 +1,11 @@
 import numpy as np
 import pandas as pd
 from typing import Callable, Dict, List, Tuple, Union
-from utils import hampel_on_residual
+from utils import hampel_gpu
 from statsmodels.tsa.stattools import acf
+import cudf
+import cupy as cp
+from cupyx.scipy.ndimage import median_filter
 
 import warnings
 
@@ -14,7 +17,6 @@ class ValidationPipeline:
         metrics: Dict[str, Callable],
         mode: str = "tscv",  # "tscv" o "walkforward"
         params: Dict = None,
-        seasonal_period: Union[int, str, None] = None,
         hampel_cfg: Dict = None
     ):
         """
@@ -43,7 +45,6 @@ class ValidationPipeline:
         self.metrics = metrics
         self.mode = mode
         self.params = params or {}
-        self.seasonal_period = seasonal_period
         self.hampel_cfg = hampel_cfg or {}
         warnings.filterwarnings("ignore", category=RuntimeWarning, module="statsmodels")
 
@@ -117,26 +118,11 @@ class ValidationPipeline:
     # ---------------------
     # Limpieza Hampel
     # ---------------------
-    def _clean_block(self, y_block: pd.Series) -> pd.Series:
-        seasonal_period = None  # valor por defecto
-
-        if isinstance(self.seasonal_period, int) and self.seasonal_period >= 2:
-            seasonal_period = int(self.seasonal_period)
-
-        elif self.seasonal_period == "auto":
-            est = int(self.estimate_seasonal_period(y_block))
-            if est >= 2:
-                seasonal_period = est
-            else:
-                seasonal_period = None  # ignoramos valores inválidos
-
-        cleaned, _ = hampel_on_residual(
-            y_block,
-            seasonal_period=seasonal_period,
-            return_mask=True,
-            **self.hampel_cfg
-        )
-        return cleaned
+    def _clean_block(self, y_block: cudf.Series) -> pd.Series:
+        y_cp = y_block.values  # cupy array en GPU
+        cleaned, _ = hampel_gpu(y_cp, window=self.hampel_cfg.get("window", 25),
+                                    sigma=self.hampel_cfg.get("sigma", 5.0))
+        return cudf.Series(cleaned, index=y_block.index)
     
     def estimate_seasonal_period(self, y, max_lag=200):
         acf_vals = acf(y, nlags=max_lag)
@@ -165,7 +151,7 @@ class ValidationPipeline:
             # Validación
             X_val, y_val = X.iloc[va_idx], y.iloc[va_idx]
 
-            y_val = y_val.reset_index(drop=True).to_numpy().astype(int)
+            y_val = cp.asarray(y_val.values).astype(cp.int32)
 
             # Preprocesado específico del modelo
             X_train_prep = self.model.preprocess(X_train_clean, retrain=True)
@@ -178,7 +164,11 @@ class ValidationPipeline:
 
             # Evaluación de métricas
             for name, metric in self.metrics.items():
-                score = metric(y_val, y_pred, y_score)
+                score = metric(
+                    cp.asnumpy(y_val),   # CPU
+                    cp.asnumpy(y_pred),
+                    cp.asnumpy(y_score)
+                )
                 scores[name].append(score)
 
         return {m: np.nanmean(vals) for m, vals in scores.items()}

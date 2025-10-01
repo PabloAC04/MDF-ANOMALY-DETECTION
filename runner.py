@@ -7,12 +7,32 @@ from tqdm import tqdm
 from modelos.datasets_to_parquet import load_project_parquets
 import os
 import numpy as np
+import cudf
+import cupy as cp
 
 from modelos.ValidationPipeline import ValidationPipeline
 from visualization import (
     plot_pr_curve, plot_roc_curve, plot_confmat,
     plot_score_hist, plot_timeline_coverage, plot_window_coverage_bars
 )
+
+from dask import delayed, compute
+from dask.diagnostics import ProgressBar
+
+
+@delayed
+def run_one_config(model_class, kwargs, X_trainval, y_trainval, metrics, params_cv, mode, hampel_cfg):
+    model = model_class(**kwargs)
+    pipeline = ValidationPipeline(
+        model=model,
+        metrics=metrics,
+        mode=mode,
+        params=params_cv,
+        hampel_cfg=hampel_cfg
+    )
+    results = pipeline.validate(X_trainval, y_trainval)
+    results.update(kwargs)
+    return results
 
 def run_experiment(
     model_class,
@@ -22,7 +42,6 @@ def run_experiment(
     metrics,
     params_cv,
     mode="tscv",
-    seasonal_period="auto",
     hampel_cfg={"window": 25, "sigma": 5.0},
     top_k=5,
     sort_metric="nab",
@@ -34,21 +53,15 @@ def run_experiment(
     keys, values = zip(*param_grid.items())
     combos = list(itertools.product(*values))
 
-    for combo in tqdm(combos, desc="Grid search", unit="config"):
-        kwargs = dict(zip(keys, combo))
-        model = model_class(**kwargs)
+    tasks = [
+        run_one_config(model_class, dict(zip(keys, combo)),
+                    X_trainval, y_trainval,
+                    metrics, params_cv, mode, hampel_cfg)
+        for combo in combos
+    ]
 
-        pipeline = ValidationPipeline(
-            model=model,
-            metrics=metrics,
-            mode=mode,
-            params=params_cv,
-            seasonal_period=seasonal_period,
-            hampel_cfg=hampel_cfg
-        )
-        results = pipeline.validate(X_trainval, y_trainval)
-        results.update(kwargs)
-        grid_results.append(results)
+    with ProgressBar():
+        grid_results = compute(*tasks)  # ejecución en paralelo
 
     df_results = pd.DataFrame(grid_results)
     metric_cols = list(metrics.keys())
@@ -81,17 +94,22 @@ def run_experiment(
         y_score = model.anomaly_score(X_test_proc)
 
         res = kwargs.copy()
+
+        y_test_gpu = cp.asarray(y_test.values)
+        y_test_cpu = cp.asnumpy(y_test_gpu)
+        y_pred_cpu = cp.asnumpy(y_pred)
+        y_score_cpu = cp.asnumpy(y_score)
         for name, metric in metrics.items():
-            res[name] = metric(y_test.to_numpy().astype(int), y_pred, y_score)
+            res[name] = metric(y_test_cpu, y_pred_cpu, y_score_cpu)
         final_rows.append(res)
 
         # guardamos payload de la mejor config (orden en topk ya es el de validación)
         if i == 0:
-            best_plots_payload = (y_test.astype(int).to_numpy(), y_pred, y_score, kwargs)
+            best_plots_payload = (y_test_cpu, y_pred_cpu, y_score_cpu, kwargs)
 
         # plot on the fly si se pide "all"
         if plot_mode == "all":
-            _plot_all(y_test, y_pred, y_score, model_class.__name__, kwargs)
+            _plot_all(y_test_cpu, y_pred_cpu, y_score_cpu, model_class.__name__, kwargs)
 
     df_final = pd.DataFrame(final_rows)[column_order]
 
@@ -140,7 +158,7 @@ def _plot_all(y_true, y_pred, y_score, model_name, kwargs):
     plot_timeline_coverage(y_true, y_pred, y_score, title=f"Cobertura temporal – {title_suffix}")
     plot_window_coverage_bars(y_true, y_pred, title=f"Cobertura por evento – {title_suffix}")
 
-DATA_DIR = r"D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data"
+DATA_DIR = r"/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data"
 
 def run_dataset_experiment(
     dataset_name: str,
@@ -149,7 +167,6 @@ def run_dataset_experiment(
     metrics,
     params_cv,
     mode: str = "tscv",
-    seasonal_period: str = "auto",
     hampel_cfg: dict = {"window": 25, "sigma": 5.0},
     top_k: int = 5,
     sort_metric: str = "nab",
@@ -183,11 +200,15 @@ def run_dataset_experiment(
     folder = os.path.join(DATA_DIR, dataset_name)
     df_train, df_val, df_test = load_project_parquets(folder, splits=True)
 
+    df_train = cudf.DataFrame.from_pandas(df_train)
+    df_val   = cudf.DataFrame.from_pandas(df_val)
+    df_test  = cudf.DataFrame.from_pandas(df_test)
+
     # Features = todas menos columnas reservadas
     feature_cols = [c for c in df_train.columns if c not in ["split", "timestamp", "anomaly"]]
 
     # Conjuntos
-    df_trainval = pd.concat([df_train, df_val], ignore_index=True)
+    df_trainval = cudf.concat([df_train, df_val], ignore_index=True)
     X_trainval, y_trainval = df_trainval[feature_cols], df_trainval["anomaly"]
     X_test, y_test = df_test[feature_cols], df_test["anomaly"]
 
@@ -206,7 +227,6 @@ def run_dataset_experiment(
         metrics=metrics,
         params_cv=params_cv,
         mode=mode,
-        seasonal_period=seasonal_period,
         hampel_cfg=hampel_cfg,
         top_k=top_k,
         sort_metric=sort_metric,

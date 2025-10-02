@@ -55,8 +55,13 @@ class ValidationPipelineBase(ABC):
 
             # Fit + predict
             self.model.fit(X_train_prep)
-            y_pred = self.model.predict(X_val_prep)
-            y_score = self.model.anomaly_score(X_val_prep)
+            y_pred = self.model.predict(X_val_prep, y_val)
+            y_score = self.model.anomaly_score(X_val_prep, y_val)
+
+            if isinstance(y_pred, tuple):
+                y_pred, y_val = y_pred
+            if isinstance(y_score, tuple):
+                y_score, y_val = y_score
 
             # Evaluación de métricas
             for name, metric in self.metrics.items():

@@ -107,17 +107,23 @@ def run_experiment(
 
         model = model_class(**kwargs)
         model.fit(X_trainval_proc)
-        y_pred  = model.predict(X_test_proc)
-        y_score = model.anomaly_score(X_test_proc)
+
+        y_pred  = model.predict(X_test_proc, y_test)
+        y_score = model.anomaly_score(X_test_proc, y_test)
+
+        if isinstance(y_pred, tuple):
+            y_pred, y_test = y_pred
+        if isinstance(y_score, tuple):
+            y_score, y_test = y_score
 
         res = kwargs.copy()
 
         if device == "gpu":
-            y_test_cpu = cp.asnumpy(cp.asarray(y_test.values))
+            y_test_cpu = cp.asnumpy(cp.asarray(y_test))
             y_pred_cpu = cp.asnumpy(y_pred)
             y_score_cpu = cp.asnumpy(y_score)
         else:
-            y_test_cpu = np.asarray(y_test.values)
+            y_test_cpu = np.asarray(y_test)
             y_pred_cpu = np.asarray(y_pred)
             y_score_cpu = np.asarray(y_score)
 

@@ -10,7 +10,10 @@ import numpy as np
 import cudf
 import cupy as cp
 
-from modelos.ValidationPipeline import ValidationPipeline
+from modelos.PCAAnomalyDetector import candidate_n_components
+from sklearn.decomposition import PCA as PCAsk
+
+from modelos.ValidationPipeline import ValidationPipelineGPU, ValidationPipelineCPU
 from visualization import (
     plot_pr_curve, plot_roc_curve, plot_confmat,
     plot_score_hist, plot_timeline_coverage, plot_window_coverage_bars
@@ -21,18 +24,32 @@ from dask.diagnostics import ProgressBar
 
 
 @delayed
-def run_one_config(model_class, kwargs, X_trainval, y_trainval, metrics, params_cv, mode, hampel_cfg):
+def run_one_config(model_class, kwargs, X_trainval, y_trainval, device, metrics, params_cv, mode, hampel_cfg):
     model = model_class(**kwargs)
-    pipeline = ValidationPipeline(
+    pipeline = get_pipeline(
         model=model,
         metrics=metrics,
         mode=mode,
-        params=params_cv,
-        hampel_cfg=hampel_cfg
+        params_cv=params_cv,
+        hampel_cfg=hampel_cfg,
+        device=device,
+        X=X_trainval
     )
     results = pipeline.validate(X_trainval, y_trainval)
     results.update(kwargs)
     return results
+
+def get_pipeline(model, metrics, mode, params_cv, hampel_cfg, device, X):
+    """
+    Devuelve el pipeline CPU/GPU en función del parámetro device.
+    - device="cpu": fuerza CPU
+    - device="gpu": fuerza GPU
+    - device="auto": heurística según tamaño y disponibilidad de GPU
+    """
+    if device == "gpu":
+        return ValidationPipelineGPU(model, metrics, mode, params_cv, hampel_cfg)
+    else:
+        return ValidationPipelineCPU(model, metrics, mode, params_cv, hampel_cfg)
 
 def run_experiment(
     model_class,
@@ -41,6 +58,7 @@ def run_experiment(
     X_test, y_test,
     metrics,
     params_cv,
+    device: str = "cpu",
     mode="tscv",
     hampel_cfg={"window": 25, "sigma": 5.0},
     top_k=5,
@@ -55,7 +73,7 @@ def run_experiment(
 
     tasks = [
         run_one_config(model_class, dict(zip(keys, combo)),
-                    X_trainval, y_trainval,
+                    X_trainval, y_trainval, device,
                     metrics, params_cv, mode, hampel_cfg)
         for combo in combos
     ]
@@ -95,10 +113,15 @@ def run_experiment(
 
         res = kwargs.copy()
 
-        y_test_gpu = cp.asarray(y_test.values)
-        y_test_cpu = cp.asnumpy(y_test_gpu)
-        y_pred_cpu = cp.asnumpy(y_pred)
-        y_score_cpu = cp.asnumpy(y_score)
+        if device == "gpu":
+            y_test_cpu = cp.asnumpy(cp.asarray(y_test.values))
+            y_pred_cpu = cp.asnumpy(y_pred)
+            y_score_cpu = cp.asnumpy(y_score)
+        else:
+            y_test_cpu = np.asarray(y_test.values)
+            y_pred_cpu = np.asarray(y_pred)
+            y_score_cpu = np.asarray(y_score)
+
         for name, metric in metrics.items():
             res[name] = metric(y_test_cpu, y_pred_cpu, y_score_cpu)
         final_rows.append(res)
@@ -160,12 +183,19 @@ def _plot_all(y_true, y_pred, y_score, model_name, kwargs):
 
 DATA_DIR = r"/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data"
 
+def decide_device(X):
+    if cp.cuda.runtime.getDeviceCount() > 0 and len(X) > 1.5e5:
+        return "gpu"
+    else:
+        return "cpu"
+
 def run_dataset_experiment(
     dataset_name: str,
     model_class,
     param_grid,
     metrics,
     params_cv,
+    device: str = "cpu",
     mode: str = "tscv",
     hampel_cfg: dict = {"window": 25, "sigma": 5.0},
     top_k: int = 5,
@@ -200,17 +230,45 @@ def run_dataset_experiment(
     folder = os.path.join(DATA_DIR, dataset_name)
     df_train, df_val, df_test = load_project_parquets(folder, splits=True)
 
-    df_train = cudf.DataFrame.from_pandas(df_train)
-    df_val   = cudf.DataFrame.from_pandas(df_val)
-    df_test  = cudf.DataFrame.from_pandas(df_test)
+    if device != "cpu" and device != "gpu":
+        device = decide_device(df_train)
+
+    if device == "gpu":
+        print("Usando GPU (cuDF + CuPy) para este experimento.")
+        df_train = cudf.DataFrame.from_pandas(df_train)
+        df_val   = cudf.DataFrame.from_pandas(df_val)
+        df_test  = cudf.DataFrame.from_pandas(df_test)
+    else:
+        print("Usando CPU (pandas + numpy) para este experimento.")
 
     # Features = todas menos columnas reservadas
     feature_cols = [c for c in df_train.columns if c not in ["split", "timestamp", "anomaly"]]
 
     # Conjuntos
-    df_trainval = cudf.concat([df_train, df_val], ignore_index=True)
+    if device == "gpu":
+        df_trainval = cudf.concat([df_train, df_val], ignore_index=True)
+    else:
+        df_trainval = pd.concat([df_train, df_val], ignore_index=True)
+    
     X_trainval, y_trainval = df_trainval[feature_cols], df_trainval["anomaly"]
     X_test, y_test = df_test[feature_cols], df_test["anomaly"]
+
+    #   Calcular n_components candidatos si se pide
+    if "n_components" in param_grid:
+        X_train = df_train[feature_cols]
+        if param_grid["n_components"] is None:
+            print("→ Calculando n_components candidatos automáticamente con candidate_n_components...")
+            pca_tmp = PCAsk(svd_solver="full")
+            pca_tmp.fit(X_train)
+            param_grid["n_components"] = candidate_n_components(pca_tmp)
+            print(f"Candidatos generados: {param_grid['n_components']}")
+        elif isinstance(param_grid["n_components"], list) and len(param_grid["n_components"]) == 0:
+            print("→ Lista vacía de n_components, generando automáticamente...")
+            pca_tmp = PCAsk(svd_solver="full")
+            pca_tmp.fit(X_train)
+            param_grid["n_components"] = candidate_n_components(pca_tmp)
+            print(f"Candidatos generados: {param_grid['n_components']}")
+
 
     # Calcular P_train real según splits
     P_train = len(df_train) / (len(df_train) + len(df_val))
@@ -226,6 +284,7 @@ def run_dataset_experiment(
         y_test=y_test,
         metrics=metrics,
         params_cv=params_cv,
+        device=device,
         mode=mode,
         hampel_cfg=hampel_cfg,
         top_k=top_k,

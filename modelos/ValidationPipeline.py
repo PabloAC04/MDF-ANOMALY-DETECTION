@@ -1,163 +1,59 @@
+
+from abc import ABC, abstractmethod
 import numpy as np
 import pandas as pd
-from typing import Callable, Dict, List, Tuple, Union
-from utils import hampel_gpu
+from typing import Callable, Dict, List, Tuple
+from utils import hampel_gpu, hampel_cpu
 from statsmodels.tsa.stattools import acf
 import cudf
 import cupy as cp
-from cupyx.scipy.ndimage import median_filter
 
 import warnings
 
 
-class ValidationPipeline:
-    def __init__(
-        self,
-        model,
-        metrics: Dict[str, Callable],
-        mode: str = "tscv",  # "tscv" o "walkforward"
-        params: Dict = None,
-        hampel_cfg: Dict = None
-    ):
-        """
-        Pipeline de validación para series temporales con anomalías.
-        
-        Parameters
-        ----------
-        model : BaseAnomalyDetector
-            Detector que implementa fit/predict/anomaly_score.
-        metrics : dict
-            Diccionario con nombre -> función de métrica.
-        mode : str
-            'tscv' (expanding window) o 'walkforward' (single-block update).
-        params : dict
-            Parámetros de splitting según el modo:
-              - tscv: {L_train_min, L_val, G, S}
-              - walkforward: {L_train0, L_blk}
-        seasonal_period : int | "auto" | None
-            - int: periodo estacional fijo (ej. 24, 168).
-            - "auto": se estima automáticamente con autocorrelación.
-            - None: no se aplica descomposición estacional.
-        hampel_cfg : dict
-            Configuración del filtro Hampel (window, sigma, causal, etc.).
-        """
+from abc import ABC, abstractmethod
+import numpy as np
+
+class ValidationPipelineBase(ABC):
+    def __init__(self, model, metrics, mode="tscv", params=None, hampel_cfg=None):
         self.model = model
         self.metrics = metrics
         self.mode = mode
         self.params = params or {}
         self.hampel_cfg = hampel_cfg or {}
-        warnings.filterwarnings("ignore", category=RuntimeWarning, module="statsmodels")
 
-        # ---------------------
-    # División temporal
-    # ---------------------
-    def _make_splits_tscv(self, T: int) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """
-        Time Series Cross-Validation (ventana expansiva)
-        - P_train: porcentaje inicial para entrenamiento
-        - num_windows: número de ventanas de validación
-        """
-        P_train = self.params.get("P_train", 0.5)
-        num_windows = self.params.get("num_windows", 10)
+    @abstractmethod
+    def _clean_block(self, y_block):
+        """Implementación específica (CPU/GPU)."""
+        pass
 
-        # tamaño inicial de train
-        L_train = int(P_train * T)
-        if L_train <= 0 or L_train >= T:
-            return []
+    @abstractmethod
+    def _to_numpy(self, arr):
+        """Conversión a numpy para métricas."""
+        pass
 
-        # tamaño de cada bloque de validación
-        L_val = (T - L_train) // num_windows
-        if L_val <= 0:
-            return []
-
-        splits = []
-        start_val = L_train
-        for w in range(num_windows):
-            end_val = start_val + L_val
-            if end_val > T:
-                break
-            train_idx = np.arange(0, start_val)  # ventana expansiva: acumula todo hasta inicio de val
-            val_idx = np.arange(start_val, end_val)
-            splits.append((train_idx, val_idx))
-            start_val = end_val
-        return splits
-
-
-    def _make_splits_wf(self, T: int) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """
-        Walkforward validation (bloques sucesivos)
-        - P_train: porcentaje inicial para entrenamiento
-        - num_windows: número de ventanas de validación
-        """
-        P_train = self.params.get("P_train", 0.5)
-        num_windows = self.params.get("num_windows", 10)
-
-        # tamaño inicial de train
-        L_train0 = int(P_train * T)
-        if L_train0 <= 0 or L_train0 >= T:
-            return []
-
-        # tamaño de cada bloque de validación
-        L_blk = (T - L_train0) // num_windows
-        if L_blk <= 0:
-            return []
-
-        splits = []
-        start = L_train0
-        for w in range(num_windows):
-            end = start + L_blk
-            if end > T:
-                break
-            tr_idx = np.arange(0, start)    # siempre desde el inicio hasta antes del bloque
-            va_idx = np.arange(start, end)  # siguiente bloque
-            splits.append((tr_idx, va_idx))
-            start = end
-        return splits
-
-
-    # ---------------------
-    # Limpieza Hampel
-    # ---------------------
-    def _clean_block(self, y_block: cudf.Series) -> pd.Series:
-        y_cp = y_block.values  # cupy array en GPU
-        cleaned, _ = hampel_gpu(y_cp, window=self.hampel_cfg.get("window", 25),
-                                    sigma=self.hampel_cfg.get("sigma", 5.0))
-        return cudf.Series(cleaned, index=y_block.index)
-    
-    def estimate_seasonal_period(self, y, max_lag=200):
-        acf_vals = acf(y, nlags=max_lag)
-        # buscamos el primer pico "fuerte" después del lag=0
-        peak_lag = np.argmax(acf_vals[1:]) + 1
-        return peak_lag
-
-    # ---------------------
-    # Loop principal
-    # ---------------------
-    def validate(self, X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
+    def validate(self, X, y):
         T = len(X)
-        splits = (
-            self._make_splits_tscv(T) if self.mode == "tscv" else self._make_splits_wf(T)
-        )
+        if self.mode == "tscv":
+            splits = make_splits_tscv(T, self.params.get("P_train", 0.5), self.params.get("num_windows", 10))
+        else:
+            splits = make_splits_wf(T, self.params.get("P_train", 0.5), self.params.get("num_windows", 10))
+
         scores = {m: [] for m in self.metrics}
 
         for tr_idx, va_idx in splits:
-            # Limpieza Hampel en el bloque de train
             X_train = X.iloc[tr_idx].copy()
-            y_train = y.iloc[tr_idx].copy()
             X_train_clean = X_train.copy()
             for col in X_train.columns:
                 X_train_clean[col] = self._clean_block(X_train[col])
 
-            # Validación
             X_val, y_val = X.iloc[va_idx], y.iloc[va_idx]
-
-            y_val = cp.asarray(y_val.values).astype(cp.int32)
 
             # Preprocesado específico del modelo
             X_train_prep = self.model.preprocess(X_train_clean, retrain=True)
             X_val_prep = self.model.preprocess(X_val, retrain=False)
 
-            # Entrenamiento + predicción
+            # Fit + predict
             self.model.fit(X_train_prep)
             y_pred = self.model.predict(X_val_prep)
             y_score = self.model.anomaly_score(X_val_prep)
@@ -165,11 +61,87 @@ class ValidationPipeline:
             # Evaluación de métricas
             for name, metric in self.metrics.items():
                 score = metric(
-                    cp.asnumpy(y_val),   # CPU
-                    cp.asnumpy(y_pred),
-                    cp.asnumpy(y_score)
+                    self._to_numpy(y_val),
+                    self._to_numpy(y_pred),
+                    self._to_numpy(y_score),
                 )
                 scores[name].append(score)
 
         return {m: np.nanmean(vals) for m, vals in scores.items()}
 
+
+# CPU
+class ValidationPipelineCPU(ValidationPipelineBase):
+    def _clean_block(self, y_block: pd.Series):
+        y_np = y_block.to_numpy(dtype=float)
+        cleaned, _ = hampel_cpu(y_np,
+                                window=self.hampel_cfg.get("window", 25),
+                                sigma=self.hampel_cfg.get("sigma", 5.0))
+        return cleaned
+
+    def _to_numpy(self, arr):
+        return np.asarray(arr)  # ya es np en CPU
+
+
+# GPU
+import cupy as cp
+
+class ValidationPipelineGPU(ValidationPipelineBase):
+    def _clean_block(self, y_block: cudf.Series):
+        y_block = y_block.ffill().bfill().fillna(0)
+        y_cp = y_block.values
+        cleaned, _ = hampel_gpu(y_cp,
+                                window=self.hampel_cfg.get("window", 25),
+                                sigma=self.hampel_cfg.get("sigma", 5.0))
+        return cleaned
+
+    def _to_numpy(self, arr):
+        return cp.asnumpy(arr)  # pasa de GPU → CPU para métricas
+
+
+def make_splits_tscv(T: int, P_train: float = 0.5, num_windows: int = 10) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Time Series Cross-Validation (ventana deslizante / rolling window)."""
+    L_train = int(P_train * T)
+    if L_train <= 0 or L_train >= T:
+        return []
+
+    L_val = (T - L_train) // num_windows
+    if L_val <= 0:
+        return []
+
+    splits = []
+    start_val = L_train
+    for _ in range(num_windows):
+        end_val = start_val + L_val
+        if end_val > T:
+            break
+        # --- Rolling window: usar solo los últimos L_train ---
+        train_idx = np.arange(start_val - L_train, start_val)
+        val_idx = np.arange(start_val, end_val)
+        splits.append((train_idx, val_idx))
+        start_val = end_val
+    return splits
+
+
+
+def make_splits_wf(T: int, P_train: float = 0.5, num_windows: int = 10) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Walkforward validation (bloques sucesivos)."""
+    L_train0 = int(P_train * T)
+    if L_train0 <= 0 or L_train0 >= T:
+        return []
+
+    L_blk = (T - L_train0) // num_windows
+    if L_blk <= 0:
+        return []
+
+    splits = []
+    start = L_train0
+    for _ in range(num_windows):
+        end = start + L_blk
+        if end > T:
+            break
+        tr_idx = np.arange(0, start)
+        va_idx = np.arange(start, end)
+        splits.append((tr_idx, va_idx))
+        start = end
+    return splits

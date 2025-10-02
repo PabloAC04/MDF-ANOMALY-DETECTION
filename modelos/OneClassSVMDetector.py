@@ -6,7 +6,7 @@ from modelos.base import BaseAnomalyDetector
 
 
 class OneClassSVMDetector(BaseAnomalyDetector):
-    def __init__(self, nu=0.05, kernel="rbf", gamma="scale", use_scaler=True):
+    def __init__(self, nu=0.05, kernel="rbf", gamma="scale"):
         """
         Detector de anomalías basado en One-Class SVM.
 
@@ -24,11 +24,10 @@ class OneClassSVMDetector(BaseAnomalyDetector):
         self.nu = nu
         self.kernel = kernel
         self.gamma = gamma
-        self.use_scaler = use_scaler
         self.is_fitted = False
 
         self.model = OneClassSVM(nu=self.nu, kernel=self.kernel, gamma=self.gamma)
-        self.scaler = StandardScaler() if self.use_scaler else None
+        self.scaler = StandardScaler()
 
     def preprocess(self, X, retrain=True):
         X = np.asarray(X, dtype=np.float32)

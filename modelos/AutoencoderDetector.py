@@ -12,45 +12,30 @@ from modelos.base import BaseAnomalyDetector
 
 
 class Autoencoder(nn.Module):
-    def __init__(self, input_dim, latent_dim=8, hidden_layers=None):
-        """
-        Autoencoder configurable.
-        hidden_layers: lista de tamaños de capas ocultas, ej. [64, 32]
-        """
-        super(Autoencoder, self).__init__()
-
-        hidden_layers = hidden_layers or [32]  # por defecto una capa
-
-        # ----- Encoder -----
-        encoder_layers = []
-        prev_dim = input_dim
-        for h in hidden_layers:
-            encoder_layers.append(nn.Linear(prev_dim, h))
-            encoder_layers.append(nn.ReLU())
-            prev_dim = h
-        encoder_layers.append(nn.Linear(prev_dim, latent_dim))
-        self.encoder = nn.Sequential(*encoder_layers)
-
-        # ----- Decoder -----
-        decoder_layers = []
-        prev_dim = latent_dim
-        for h in reversed(hidden_layers):
-            decoder_layers.append(nn.Linear(prev_dim, h))
-            decoder_layers.append(nn.ReLU())
-            prev_dim = h
-        decoder_layers.append(nn.Linear(prev_dim, input_dim))
-        decoder_layers.append(nn.Sigmoid())  # salida entre 0 y 1
-        self.decoder = nn.Sequential(*decoder_layers)
+    def __init__(self, input_dim, latent_dim=8, hidden_dim=16):
+        super().__init__()
+        # Encoder súper ligero
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LeakyReLU(True),
+            nn.Linear(hidden_dim, latent_dim)
+        )
+        # Decoder súper ligero
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
+            nn.LeakyReLU(True),
+            nn.Linear(hidden_dim, input_dim)  # sin sigmoid
+        )
 
     def forward(self, x):
         z = self.encoder(x)
-        x_hat = self.decoder(z)
-        return x_hat
+        return self.decoder(z)
+
 
 class AutoencoderDetector(BaseAnomalyDetector):
     def __init__(self, latent_dim=8, lr=1e-3, epochs=50, batch_size=32,
                  use_scaler=True, device=None, verbose=False,
-                 early_stopping=True, patience=5, delta=1e-4, hidden_layers=None):
+                 early_stopping=True, patience=5, delta=1e-4):
         """
         Detector de anomalías basado en Autoencoder (PyTorch).
 
@@ -81,7 +66,7 @@ class AutoencoderDetector(BaseAnomalyDetector):
         """
         torch.backends.cudnn.benchmark = True
         self.input_dim = None
-        self.latent_dim = latent_dim
+        self.latent_dim = int(latent_dim)
         self.lr = float(lr)
         self.epochs = int(epochs)
         self.batch_size = int(batch_size)
@@ -92,7 +77,6 @@ class AutoencoderDetector(BaseAnomalyDetector):
         self.model = None
         self.criterion = None
         self.optimizer = None
-        self.hidden_layers = hidden_layers
 
         self.threshold = None
         self.is_fitted = False
@@ -126,8 +110,8 @@ class AutoencoderDetector(BaseAnomalyDetector):
         Admite early stopping si se pasa un conjunto de validación.
         """
         if self.input_dim is None:
-            self.input_dim = X.shape[1]
-            self.model = Autoencoder(self.input_dim, self.latent_dim, hidden_layers=self.hidden_layers).to(self.device)
+            self.input_dim = int(X.shape[1])
+            self.model = Autoencoder(self.input_dim, self.latent_dim).to(self.device)
             self.criterion = nn.MSELoss()
             self.optimizer = optim.AdamW(self.model.parameters(), lr=self.lr, fused=(self.device.type == "cuda"))
 
@@ -225,13 +209,13 @@ class AutoencoderDetector(BaseAnomalyDetector):
         return self
 
 
-    def predict(self, X):
+    def predict(self, X, y=None):
         if not self.is_fitted:
             raise RuntimeError("El modelo debe ser entrenado con fit() antes de predecir.")
         scores = self.anomaly_score(X)
         return (scores > self.threshold).astype(int)  # 1 = anómalo, 0 = normal
 
-    def anomaly_score(self, X):
+    def anomaly_score(self, X, y=None):
         if not self.is_fitted:
             raise RuntimeError("El modelo debe ser entrenado con fit() antes de calcular scores.")
         X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)

@@ -1,11 +1,13 @@
 import cupy as cp
-from cuml.decomposition import PCA
-from cuml.preprocessing import StandardScaler
+from cuml.decomposition import PCA as PCAcuml
+from cuml.preprocessing import StandardScaler as StandardScalerCuml
+from sklearn.decomposition import PCA as PCAsk
+from sklearn.preprocessing import StandardScaler as StandardScalerSk
 import cudf
 from .base import BaseAnomalyDetector  
 import numpy as np
 
-class PCAAnomalyDetector(BaseAnomalyDetector):
+class PCAAnomalyDetectorGPU(BaseAnomalyDetector):
     def __init__(self, n_components=None, threshold=None):
         """
         n_components: número de componentes principales a retener.
@@ -15,7 +17,7 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         self.n_components = int(n_components) if n_components is not None else None
         self.threshold = threshold
         self.pca = None
-        self.scaler = StandardScaler(with_mean=True, with_std=True)
+        self.scaler = StandardScalerCuml(with_mean=True, with_std=True)
         self._threshold_value = None
 
     def preprocess(self, X, retrain=True):
@@ -38,13 +40,14 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         """
         Ajusta el modelo PCA en GPU y calcula el threshold.
         """
-        self.pca = PCA(n_components=self.n_components, svd_solver="full")
+        self.pca = PCAcuml(n_components=self.n_components, svd_solver="full")
         self.pca.fit(X)
 
         errors = self._reconstruction_error(X)
 
-        q = self.threshold if self.threshold is not None else 0.997  # ~3*std
-        self._threshold_value = cp.quantile(errors, q).item()  # pasar a float CPU
+        mu, sigma = cp.mean(errors), cp.std(errors)  # en GPU
+        n_sigma = self.threshold if self.threshold is not None else 3.0 # default 3 sigma
+        self._threshold_value = (mu + n_sigma * sigma).item() 
 
     def predict(self, X):
         """
@@ -67,7 +70,42 @@ class PCAAnomalyDetector(BaseAnomalyDetector):
         errors = cp.mean((X_proc - X_projected) ** 2, axis=1)
         return errors.values
 
+class PCAAnomalyDetectorCPU(BaseAnomalyDetector):
+    def __init__(self, n_components=None, threshold=None):
+        self.n_components = int(n_components) if n_components is not None else None
+        self.threshold = threshold
+        self.pca = None
+        self.scaler = StandardScalerSk(with_mean=True, with_std=True)
+        self._threshold_value = None
 
+    def preprocess(self, X, retrain=True):
+        X = X.astype("float32")
+        if retrain:
+            return self.scaler.fit_transform(X)
+        else:
+            return self.scaler.transform(X)
+
+    def fit(self, X):
+        self.pca = PCAsk(n_components=self.n_components, svd_solver="full")
+        self.pca.fit(X)
+
+        errors = self._reconstruction_error(X)
+        
+        mu, sigma = np.mean(errors), np.std(errors)  # en CPU
+        n_sigma = self.threshold if self.threshold is not None else 3.0  # default 3 sigma
+        self._threshold_value = mu + n_sigma * sigma
+
+    def predict(self, X):
+        errors = self._reconstruction_error(X)
+        return (errors > self._threshold_value).astype(int)
+
+    def anomaly_score(self, X):
+        return self._reconstruction_error(X)
+
+    def _reconstruction_error(self, X_proc):
+        X_projected = self.pca.inverse_transform(self.pca.transform(X_proc))
+        errors = np.mean((X_proc - X_projected) ** 2, axis=1)
+        return errors
 
 import numpy as np
 

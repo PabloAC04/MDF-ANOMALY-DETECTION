@@ -44,7 +44,6 @@ def get_pipeline(model, metrics, mode, params_cv, hampel_cfg, device, X):
     Devuelve el pipeline CPU/GPU en función del parámetro device.
     - device="cpu": fuerza CPU
     - device="gpu": fuerza GPU
-    - device="auto": heurística según tamaño y disponibilidad de GPU
     """
     if device == "gpu":
         return ValidationPipelineGPU(model, metrics, mode, params_cv, hampel_cfg)

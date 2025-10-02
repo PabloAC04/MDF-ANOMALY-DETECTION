@@ -510,7 +510,7 @@ class IsolationForestCPU(BaseAnomalyDetector):
         self.n_jobs = n_jobs
 
     # ---------- Hooks de tu pipeline ----------
-    def preprocess(self, X, retrain: bool = True):
+    def preprocess(self, X, retrain: bool = True, y=None):
         """
         Acepta pandas/cudf/np. Devuelve np.ndarray en CPU.
         """
@@ -552,7 +552,7 @@ class IsolationForestCPU(BaseAnomalyDetector):
             self.threshold_ = float(np.quantile(scores_train, q))
         return self
 
-    def anomaly_score(self, X):
+    def anomaly_score(self, X, y=None):
         X_np = self.preprocess(X, retrain=False).astype(np.float32, copy=False)
         n = int(X_np.shape[0])
         acc = np.zeros(n, dtype=np.float32)

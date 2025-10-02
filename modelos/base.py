@@ -6,11 +6,11 @@ class BaseAnomalyDetector(ABC):
         pass
 
     @abstractmethod
-    def predict(self, X):
+    def predict(self, X, y=None):
         pass
 
     @abstractmethod
-    def anomaly_score(self, X):
+    def anomaly_score(self, X, y=None):
         pass
 
     def preprocess(self, X, retrain=False):

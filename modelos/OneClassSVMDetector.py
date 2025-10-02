@@ -44,7 +44,7 @@ class OneClassSVMDetector(BaseAnomalyDetector):
         self.is_fitted = True
         return self
 
-    def predict(self, X):
+    def predict(self, X, y=None):
         """
         Predice etiquetas para los datos X.
         Retorna 1 para normal, -1 para anómalo.
@@ -55,7 +55,7 @@ class OneClassSVMDetector(BaseAnomalyDetector):
 
         return np.where(y_pred == -1, 1, 0) # Convertir etiquetas: 1 -> 0 (normal), -1 -> 1 (anómalo)
 
-    def anomaly_score(self, X):
+    def anomaly_score(self, X, y=None):
         """
         Devuelve el score de anomalía (distancia a la frontera).
         Valores negativos indican mayor probabilidad de anomalía.

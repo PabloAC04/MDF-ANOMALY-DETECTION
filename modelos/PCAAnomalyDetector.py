@@ -53,14 +53,14 @@ class PCAAnomalyDetectorGPU(BaseAnomalyDetector):
         n_sigma = self.threshold if self.threshold is not None else 3.0 # default 3 sigma
         self._threshold_value = (mu + n_sigma * sigma).item() 
 
-    def predict(self, X):
+    def predict(self, X, y=None):
         """
         Devuelve etiquetas: 0 = normal, 1 = anómalo
         """
         errors = self._reconstruction_error(X)
         return cp.where(errors > self._threshold_value, 1, 0).get()
 
-    def anomaly_score(self, X):
+    def anomaly_score(self, X, y=None):
         """
         Devuelve el error de reconstrucción (mayor = más anómalo)
         """

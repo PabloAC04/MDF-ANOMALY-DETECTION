@@ -7,7 +7,7 @@ import ast
 
 class DatasetsToParquet:
     
-    def __init__(self, dataset_name: str, input_path = "D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION", output_path = "D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data"):
+    def __init__(self, dataset_name: str, input_path = "/home/pablo/TFG/MDF-ANOMALY-DETECTION", output_path = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data"):
         self.dataset_name = dataset_name
         self.input_path = input_path
         self.output_path = output_path
@@ -355,7 +355,10 @@ class DatasetsToParquet:
         """
         Reordena columnas al formato estándar:
         features..., split, timestamp, anomaly
+        Además rellena todos los NaN/null para evitar errores con cudf/cupy.
         """
+        # Rellenar NaN: primero ffill, luego bfill y finalmente 0 si queda alguno
+        df = df.ffill().bfill().fillna(0)
         cols = list(df.columns)
         # Asegurar columnas obligatorias
         for c in ["split", "timestamp", "anomaly"]:
@@ -452,14 +455,14 @@ if __name__ == "__main__":
     #     dataset_name=dataset,
     # ).convert()
 
-    # inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\{dataset}')
+    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/{dataset}')
 
-    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\SMAP')
-    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\MSL')
-    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\EbayRanSynCoders')
-    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\SKAB')
-    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\BATADAL')
-    inspect_parquet(f'D:\TFG\TFG\Avance\MDF-ANOMALY-DETECTION\modelos\data\WADI')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/BATADAL')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/MSL')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/EbayRanSynCoders')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SMAP')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/WADI')
 
     # data = load_project_parquets("data/WADI")
 

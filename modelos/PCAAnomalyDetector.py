@@ -1,6 +1,10 @@
 import cupy as cp
-from cuml.decomposition import PCA as PCAcuml
-from cuml.preprocessing import StandardScaler as StandardScalerCuml
+try:
+    from cuml.decomposition import PCA as PCAcuml
+    from cuml.preprocessing import StandardScaler as StandardScalerCuml
+except ImportError:
+    PCAcuml = None
+    StandardScalerCuml = None
 from sklearn.decomposition import PCA as PCAsk
 from sklearn.preprocessing import StandardScaler as StandardScalerSk
 import cudf

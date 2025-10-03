@@ -5,6 +5,7 @@ import torch.optim as optim
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import cudf
+from spot import SPOT
 
 from modelos.base import BaseAnomalyDetector
 
@@ -184,7 +185,22 @@ class TransformerAutoencoderDetector(BaseAnomalyDetector):
         with torch.no_grad(), torch.amp.autocast(device_type=self.device.type):
             recon = self.model(X_tensor)
             errors = torch.mean((X_tensor[:, -1, :] - recon) ** 2, dim=1)
-        self.threshold = torch.quantile(errors.cpu(), 0.95).item()
+        
+        # ===== Umbral con SPOT (POT) =====
+
+        # split: 80% inicialización, 20% stream
+        n_init = int(0.8 * len(errors))
+        init_data, stream_data = errors[:n_init], errors[n_init:]
+
+        s = SPOT(q=1e-4)  # nivel de riesgo
+        s.fit(init_data, stream_data)
+        s.initialize(level=0.98, verbose=False)
+        results = s.run(dynamic=False)
+
+        # threshold final = último umbral calculado
+        self.threshold = results["thresholds"][-1]
+        print(f"Threshold calculado con SPOT: {self.threshold:.6f}")
+
         self.is_fitted = True
         return self
 

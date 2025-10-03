@@ -7,6 +7,8 @@ import os
 import pandas as pd
 import cupy as cp
 import cudf
+from spot import SPOT   
+
 
 from modelos.base import BaseAnomalyDetector
 
@@ -198,12 +200,26 @@ class AutoencoderDetector(BaseAnomalyDetector):
                             print(f"⏹ Early stopping activado en epoch {self.total_epochs_trained}")
                         break
 
-        # Calcular umbral como percentil 95 del error de reconstrucción en train
         self.model.eval()
         with torch.no_grad(), torch.amp.autocast(device_type=self.device.type):
             recon = self.model(X_tensor)
-            errors = torch.mean((X_tensor - recon) ** 2, dim=1)
-        self.threshold = torch.quantile(errors.cpu(), 0.95).item()
+            errors = torch.mean((X_tensor - recon) ** 2, dim=1).cpu().numpy()
+
+        # ===== Umbral con SPOT (POT) =====
+
+        # split: 80% inicialización, 20% stream
+        n_init = int(0.8 * len(errors))
+        init_data, stream_data = errors[:n_init], errors[n_init:]
+
+        s = SPOT(q=1e-4)  # nivel de riesgo
+        s.fit(init_data, stream_data)
+        s.initialize(level=0.98, verbose=False)
+        results = s.run(dynamic=False)
+
+        # threshold final = último umbral calculado
+        self.threshold = results["thresholds"][-1]
+        print(f"Threshold calculado con SPOT: {self.threshold:.6f}")
+
 
         self.is_fitted = True
         return self

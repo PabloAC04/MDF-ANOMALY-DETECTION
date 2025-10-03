@@ -99,11 +99,11 @@ class PCAAnomalyDetectorCPU(BaseAnomalyDetector):
         n_sigma = self.threshold if self.threshold is not None else 3.0  # default 3 sigma
         self._threshold_value = mu + n_sigma * sigma
 
-    def predict(self, X):
+    def predict(self, X, y=None):
         errors = self._reconstruction_error(X)
         return (errors > self._threshold_value).astype(int)
 
-    def anomaly_score(self, X):
+    def anomaly_score(self, X, y=None):
         return self._reconstruction_error(X)
 
     def _reconstruction_error(self, X_proc):

@@ -101,6 +101,8 @@ class DatasetsToParquet:
             ignore_index=True
         )
 
+        df_test_val["anomaly"] = df_test_val["anomaly"].astype(int)
+
         # Eliminar columna auxiliar si existe
         if "changepoint" in df_test_val.columns:
             df_test_val.drop(columns=["changepoint"], inplace=True)
@@ -457,22 +459,22 @@ if __name__ == "__main__":
 
     # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/{dataset}')
 
-    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/BATADAL')
-    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB')
-    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/MSL')
-    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/EbayRanSynCoders')
-    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SMAP')
-    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/WADI')
+    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/BATADAL')
+    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB')
+    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/MSL')
+    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/EbayRanSynCoders')
+    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SMAP')
+    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/WADI')
 
-    # data = load_project_parquets("data/WADI")
+    df_train, df_val, df_test = load_project_parquets("/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB", splits=True)
 
-    # #Visualizar datos
+    #Visualizar datos
 
-    # for split, df in data.items():
-    #     if df is not None:
-    #         print(f"\n--- {split.upper()} ---")
-    #         print(df.head())
-    #         print(f"Filas: {len(df)}, Columnas: {list(df.columns)}")
+    for name, df in zip(["train", "val", "test"], [df_train, df_val, df_test]):
+        if df is not None:
+            print(f"\n--- {name.upper()} ---")
+            print(f"Filas: {len(df)}, Columnas: {list(df.columns)}")
+            print(f"Anomalías: {df['anomaly'].sum()} / {len(df)}")
 
 
 

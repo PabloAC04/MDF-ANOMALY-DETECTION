@@ -261,18 +261,13 @@ def run_dataset_experiment(
     #   Calcular n_components candidatos si se pide
     if "n_components" in param_grid:
         X_train = df_train[feature_cols]
-        if param_grid["n_components"] is None:
-            print("→ Calculando n_components candidatos automáticamente con candidate_n_components...")
-            pca_tmp = PCAsk(svd_solver="full")
-            pca_tmp.fit(X_train)
-            param_grid["n_components"] = candidate_n_components(pca_tmp)
-            print(f"Candidatos generados: {param_grid['n_components']}")
-        elif isinstance(param_grid["n_components"], list) and len(param_grid["n_components"]) == 0:
-            print("→ Lista vacía de n_components, generando automáticamente...")
-            pca_tmp = PCAsk(svd_solver="full")
-            pca_tmp.fit(X_train)
-            param_grid["n_components"] = candidate_n_components(pca_tmp)
-            print(f"Candidatos generados: {param_grid['n_components']}")
+        X_train_cpu = X_train.to_numpy() if hasattr(X_train, "to_numpy") else X_train
+        
+        print("→ Calculando n_components candidatos automáticamente con candidate_n_components...")
+        pca_tmp = PCAsk(svd_solver="full")
+        pca_tmp.fit(X_train_cpu)
+        param_grid["n_components"] = candidate_n_components(pca_tmp)
+        print(f"Candidatos generados: {param_grid['n_components']}")
 
 
     # Calcular P_train real según splits

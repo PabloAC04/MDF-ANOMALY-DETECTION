@@ -61,7 +61,7 @@ class ValidationPipelineBase(ABC):
             if isinstance(y_pred, tuple):
                 y_pred, y_val = y_pred
             if isinstance(y_score, tuple):
-                y_score, y_val = y_score
+                y_score, _ = y_score
 
             # Evaluación de métricas
             for name, metric in self.metrics.items():

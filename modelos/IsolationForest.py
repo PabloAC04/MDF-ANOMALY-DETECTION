@@ -290,7 +290,7 @@ class IsolationForest(BaseAnomalyDetector):
             self.threshold_ = float(cp.quantile(scores_train, q))
         return self
 
-    def anomaly_score(self, X):
+    def anomaly_score(self, X, y=None):
         X = cp.asarray(X, dtype=cp.float32)
         n = int(X.shape[0])
         # Acumulamos longitudes medias
@@ -303,7 +303,7 @@ class IsolationForest(BaseAnomalyDetector):
         scores = cp.exp2(-Eh / self._denom)
         return scores
 
-    def predict(self, X, threshold=None):
+    def predict(self, X, y=None, threshold=None):
         X = cp.asarray(X, dtype=cp.float32)
         tau = float(self.threshold_ if threshold is None else threshold)
         return self.anomaly_score(X) >= tau
@@ -564,6 +564,6 @@ class IsolationForestCPU(BaseAnomalyDetector):
         scores = np.exp2(-Eh / self._denom)
         return scores
 
-    def predict(self, X, threshold=None):
+    def predict(self, X, y=None, threshold=None):
         tau = float(self.threshold_ if threshold is None else threshold)
         return self.anomaly_score(X) >= tau

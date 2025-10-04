@@ -1,6 +1,6 @@
 import numpy as np
 from sklearn.svm import OneClassSVM
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler
 
 from modelos.base import BaseAnomalyDetector
 
@@ -19,7 +19,7 @@ class OneClassSVMDetector(BaseAnomalyDetector):
         gamma : {"scale", "auto"} o float, opcional (default="scale")
             Parámetro del kernel RBF/polinómico/sigmoide.
         use_scaler : bool, opcional (default=True)
-            Si True, aplica normalización con StandardScaler.
+            Si True, aplica normalización con RobustScaler.
         """
         self.nu = nu
         self.kernel = kernel
@@ -27,7 +27,7 @@ class OneClassSVMDetector(BaseAnomalyDetector):
         self.is_fitted = False
 
         self.model = OneClassSVM(nu=self.nu, kernel=self.kernel, gamma=self.gamma)
-        self.scaler = StandardScaler()
+        self.scaler = RobustScaler()
 
     def preprocess(self, X, retrain=True):
         X = np.asarray(X, dtype=np.float32)

@@ -205,21 +205,34 @@ class AutoencoderDetector(BaseAnomalyDetector):
             recon = self.model(X_tensor)
             errors = torch.mean((X_tensor - recon) ** 2, dim=1).cpu().numpy()
 
-        # ===== Umbral con SPOT (POT) =====
+        # ===== Umbral con SPOT (estilo TranAD) =====
 
-        # split: 80% inicialización, 20% stream
-        n_init = int(0.8 * len(errors))
-        init_data, stream_data = errors[:n_init], errors[n_init:]
+        # Usa solo errores de entrenamiento para calibrar
+        train_errors = errors[:int(0.8 * len(errors))]
+        test_errors = errors[int(0.8 * len(errors)):]
 
-        s = SPOT(q=1e-4)  # nivel de riesgo
-        s.fit(init_data, stream_data)
-        s.initialize(level=0.98, verbose=False)
-        results = s.run(dynamic=False)
+        q = 1e-3
+        lm = [0.995, 1.4]  # nivel inicial y factor de amplificación
 
-        # threshold final = último umbral calculado
-        self.threshold = results["thresholds"][-1]
-        print(f"Threshold calculado con SPOT: {self.threshold:.6f}")
+        while True:
+            try:
+                s = SPOT(q)
+                s.fit(train_errors, test_errors)
+                s.initialize(level=lm[0], min_extrema=False, verbose=False)
+            except:
+                lm[0] *= 0.999
+            else:
+                break
 
+        ret = s.run(dynamic=False)
+        thr_seq = np.array(ret["thresholds"], dtype=float)
+
+        if len(thr_seq) > 0:
+            base_thr = np.mean(thr_seq) * lm[1]
+            perc_thr = np.percentile(train_errors, 99.7)
+            self.threshold = float(max(base_thr, perc_thr))
+        else:
+            self.threshold = float(np.percentile(train_errors, 99.7))
 
         self.is_fitted = True
         return self
@@ -240,3 +253,29 @@ class AutoencoderDetector(BaseAnomalyDetector):
             recon = self.model(X_tensor)
             errors = torch.mean((X_tensor - recon) ** 2, dim=1).cpu().numpy()
         return errors
+
+def pick_clean_window(errors, win_len=800, step=50, crit='q90'):
+    """
+    Busca un intervalo 'limpio' para inicializar SPOT.
+    - win_len: longitud de la ventana
+    - step: salto al mover la ventana
+    - crit: criterio ('q90' = percentil 90 bajo, 'mean' = media, 'hybrid')
+    """
+    e = np.asarray(errors, dtype=float)
+    n = len(e)
+    best = None
+    best_val = np.inf
+    for i0 in range(0, n - win_len + 1, step):
+        w = e[i0:i0+win_len]
+        q90 = np.quantile(w, 0.90)
+        mu = w.mean()
+        if crit == 'q90':
+            val = q90
+        elif crit == 'mean':
+            val = mu
+        else:  # 'hybrid'
+            val = q90 + 0.5 * w.std()
+        if val < best_val:
+            best = (i0, i0+win_len)
+            best_val = val
+    return best

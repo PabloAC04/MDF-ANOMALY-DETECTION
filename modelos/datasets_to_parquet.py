@@ -172,14 +172,22 @@ class DatasetsToParquet:
             df_attack["anomaly"] = df_attack["anomaly"].replace({1: 0, -1: 1})
         df_train["anomaly"] = 0
 
-        # Definir splits
-        df_train["split"] = "train"
+        # Definir splits val/test desde ataques
         val_size = int(len(df_attack) * 0.6)
         df_val = df_attack.iloc[:val_size].copy()
         df_test = df_attack.iloc[val_size:].copy()
         df_val["split"], df_test["split"] = "val", "test"
 
-        # Unir en un único DataFrame
+        # --- Reducción del train: últimas 2 * len(val) ---
+        target_train_size = 2 * len(df_val)
+        if len(df_train) > target_train_size:
+            df_train = df_train.iloc[-target_train_size:]
+        df_train["split"] = "train"
+
+        print(f"[i] Tamaño final del train: {len(df_train)} (2 * len(val) = {2*len(df_val)})")
+        print(f"[i] Tamaño val: {len(df_val)}, test: {len(df_test)}")
+
+        # Unir todo
         df_all = pd.concat([df_train, df_val, df_test], axis=0).reset_index(drop=True)
 
         # Normalizar columnas y guardar en parquet
@@ -189,6 +197,7 @@ class DatasetsToParquet:
         self._save_to_parquet(df_all, os.path.join(folder_save, "data.parquet"))
 
         print(f"[✓] Dataset WADI procesado y guardado en {folder_save}/data.parquet")
+
 
 
     def _process_EbayRanSynCoders(self):
@@ -356,34 +365,50 @@ class DatasetsToParquet:
     def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Reordena columnas al formato estándar:
-        features..., split, timestamp, anomaly
-        Además rellena todos los NaN/null para evitar errores con cudf/cupy.
+        features..., split, timestamp, anomaly.
+        Además elimina NaN, ±inf y valores desorbitados.
         """
-        # Rellenar NaN: primero ffill, luego bfill y finalmente 0 si queda alguno
-        df = df.ffill().bfill().fillna(0)
-        cols = list(df.columns)
+
+        # Reemplazar inf/-inf por NaN
+        df = df.replace([np.inf, -np.inf], np.nan)
+
+        # Rellenar NaN: primero ffill, luego bfill y finalmente 0
+        df = df.ffill().bfill().fillna(0).infer_objects(copy=False)
+
+        # Acotar valores extremos en todas las columnas numéricas
+        for col in df.select_dtypes(include=[np.number]).columns:
+            df[col] = np.clip(df[col], -1e6, 1e6)  # evita valores que petan en float64
+
         # Asegurar columnas obligatorias
+        cols = list(df.columns)
         for c in ["split", "timestamp", "anomaly"]:
             if c not in cols:
                 raise ValueError(f"Falta columna obligatoria: {c}")
+
         # Features = todas las demás que no son split/timestamp/anomaly
         feature_cols = [c for c in cols if c not in ["split", "timestamp", "anomaly"]]
+
         return df[feature_cols + ["split", "timestamp", "anomaly"]]
 
 
-
-def inspect_parquet(folder: str, split: str = None, n: int = 5):
+def inspect_parquet(folder: str, split: str = None, n: int = 5, tol: float = 1e-6):
     """
-    Lee un único data.parquet en `folder` y muestra información básica.
+    Lee un único data.parquet en `folder` y muestra información básica, 
+    junto con un análisis de variabilidad de las columnas numéricas.
     
     Args:
         folder (str): Ruta a la carpeta donde está el parquet (ej: data/BATADAL).
         split (str): Uno de {"train", "val", "test"} o None para todo el dataset.
         n (int): Número de filas a mostrar como ejemplo.
+        tol (float): Umbral para considerar la desviación estándar ≈ 0.
     
     Returns:
         df (pd.DataFrame): El DataFrame cargado (filtrado por split si aplica).
     """
+    import os
+    import numpy as np
+    import pandas as pd
+
     path = os.path.join(folder, "data.parquet")
     if not os.path.exists(path):
         print(f"[!] No existe el archivo {path}")
@@ -396,13 +421,56 @@ def inspect_parquet(folder: str, split: str = None, n: int = 5):
 
     print(f"\n[✓] {('todo el dataset' if split is None else split.upper())} cargado desde {path}")
     print(f"   - Filas: {len(df)}")
-    print(f"   - Columnas: {list(df.columns)}")
+    print(f"   - Columnas: {len(df.columns)}")
     if "anomaly" in df.columns:
         print(f"   - Conteo anomalías: {df['anomaly'].sum()} de {len(df)} "
               f"({100*df['anomaly'].mean():.2f}%)")
     print("\n[Vista previa]")
     print(df.head(n))
+
+    # === Nuevo: análisis de variabilidad ===
+    print("\n=== Análisis de variabilidad ===")
+
+    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    if not num_cols:
+        print("[!] No hay columnas numéricas que analizar.")
+        return df
+
+    # Desviaciones estándar y medias
+    stds = df[num_cols].std(numeric_only=True)
+    means = df[num_cols].mean(numeric_only=True)
+
+    # Columnas constantes y casi constantes
+    constant_cols = stds[stds == 0].index.tolist()
+    near_constant_cols = stds[(stds > 0) & (stds < tol)].index.tolist()
+
+    # Variabilidad relativa (std / |mean|)
+    eps = 1e-12
+    rel_var = (stds / (means.abs() + eps)).sort_values()
+
+    print(f"   - Total columnas numéricas: {len(num_cols)}")
+    print(f"   - Constantes (std = 0): {len(constant_cols)}")
+    print(f"   - Casi constantes (std < {tol}): {len(near_constant_cols)}")
+
+    if constant_cols:
+        print("\n[Constantes]")
+        for c in constant_cols:
+            print(f"  - {c}")
+
+    if near_constant_cols:
+        print("\n[Casi constantes]")
+        for c in near_constant_cols:
+            print(f"  - {c}")
+
+    print("\n[Top 10 columnas con menor variabilidad relativa (std / |mean|)]")
+    print(rel_var.head(10))
+
+    print("\n[Top 10 columnas con mayor variabilidad relativa]")
+    print(rel_var.tail(10))
+
+    print("\n[✓] Inspección completada.\n")
     return df
+
 
 
 def load_project_parquets(folder: str, splits: bool = False):
@@ -446,7 +514,7 @@ def load_project_parquets(folder: str, splits: bool = False):
 
 if __name__ == "__main__":
 
-    # dataset = "BATADAL"
+    dataset = "BATADAL"
     # dataset = "SKAB"
     # dataset = "WADI"
     # dataset = "EbayRanSynCoders"
@@ -459,22 +527,22 @@ if __name__ == "__main__":
 
     # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/{dataset}')
 
-    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/BATADAL')
-    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB')
-    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/MSL')
-    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/EbayRanSynCoders')
-    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SMAP')
-    # inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/WADI')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/BATADAL')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/MSL')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/EbayRanSynCoders')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SMAP')
+    inspect_parquet(f'/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/WADI')
 
-    df_train, df_val, df_test = load_project_parquets("/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB", splits=True)
+    # df_train, df_val, df_test = load_project_parquets("/home/pablo/TFG/MDF-ANOMALY-DETECTION/modelos/data/SKAB", splits=True)
 
     #Visualizar datos
 
-    for name, df in zip(["train", "val", "test"], [df_train, df_val, df_test]):
-        if df is not None:
-            print(f"\n--- {name.upper()} ---")
-            print(f"Filas: {len(df)}, Columnas: {list(df.columns)}")
-            print(f"Anomalías: {df['anomaly'].sum()} / {len(df)}")
+    # for name, df in zip(["train", "val", "test"], [df_train, df_val, df_test]):
+    #     if df is not None:
+    #         print(f"\n--- {name.upper()} ---")
+    #         print(f"Filas: {len(df)}, Columnas: {list(df.columns)}")
+    #         print(f"Anomalías: {df['anomaly'].sum()} / {len(df)}")
 
 
 

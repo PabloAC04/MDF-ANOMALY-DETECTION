@@ -38,6 +38,14 @@ def canales_validos(mdf_file):
 
     return list(canales_finales.values())
 
+def remove_constant_columns(df: pd.DataFrame):
+    """Elimina columnas donde todos los valores son iguales (incluyendo si todos son NaN)."""
+    nunique = df.nunique(dropna=True)
+    constant_cols = nunique[nunique <= 1].index
+    if len(constant_cols) > 0:
+        print(f"[INFO] Eliminadas {len(constant_cols)} columnas constantes")
+    return df.drop(columns=constant_cols)
+
 def process_channel_chunk(path_mdf, channels, raster, include_labels=False):
     """Procesa un subconjunto de canales usando mdf.filter y devuelve un DataFrame y, opcionalmente, mappings categóricos."""
     mdf = MDF(path_mdf)
@@ -52,7 +60,13 @@ def process_channel_chunk(path_mdf, channels, raster, include_labels=False):
             if col in df_lbl.columns:
                 # si todos los valores de label son numéricos → ignorar
                 lbl_vals = df_lbl[col].dropna().unique()
+
+                # ignorar si todos los valores de label son numéricos
                 if all([pd.api.types.is_number(x) for x in lbl_vals]):
+                    continue
+                
+                # ignorar si solo hay 1 valor distinto de NaN
+                if len(lbl_vals) <= 1:
                     continue
 
                 mapping = {}
@@ -66,6 +80,7 @@ def process_channel_chunk(path_mdf, channels, raster, include_labels=False):
 
     # eliminar NaN del dataframe antes de devolver
     df_raw = df_raw.ffill().bfill().fillna(0)
+    df_raw = remove_constant_columns(df_raw)
 
     return df_raw, cat_map
 
@@ -156,6 +171,7 @@ def mdf_to_parquet_by_channels(path_mdf, out_dir, num_workers=None):
 
     df_base = mdf.to_dataframe(channels=base_channels, raster=base_min_period, raw=True)
     df_base.ffill().bfill().fillna(0)
+    df_base = remove_constant_columns(df_base)
     export_parquet(df_base, os.path.join(out_dir, "base.parquet"), base_periods)
 
     # ---- Conjuntos ----
@@ -165,10 +181,11 @@ def mdf_to_parquet_by_channels(path_mdf, out_dir, num_workers=None):
 
         df_set = mdf.to_dataframe(channels=chans, raster=set_min_period, raw=True)
         df_set.ffill().bfill().fillna(0)
+        df_set = remove_constant_columns(df_set)
         fname = os.path.basename(root).replace(".", "_") + ".parquet"
         export_parquet(df_set, os.path.join(out_dir, fname), set_periods)
 
-def info_parquet(path_parquet: str):
+def info_parquet(path_parquet: str, max_cols: int = 10):
     # Leer el parquet
     df = pd.read_parquet(path_parquet).astype('float32')
 
@@ -185,21 +202,43 @@ def info_parquet(path_parquet: str):
     print(f"💾 Tamaño en memoria: {mem_mb:.2f} MB")
     print(f"💾 Tamaño en disco (aprox.): {os.path.getsize(path_parquet) / (1024**2):.2f} MB")
 
-    # Opcional: tipos de datos resumidos
+    # Tipos de datos
     print("\n📑 Tipos de datos:")
     print(df.dtypes.value_counts())
+
+    # Estadísticas resumidas
+    print("\n📈 Resumen estadístico de columnas numéricas:")
+    stats = df.describe().T[["mean", "std", "min", "max"]]
+
+    # Mostrar solo algunas columnas si son demasiadas
+    if len(stats) > max_cols:
+        print(stats.head(max_cols))
+        print(f"... ({len(stats) - max_cols} columnas más)")
+    else:
+        print(stats)
 
     return df
 
 
+
 if __name__ == "__main__":
-    archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF3.mf4"
-    salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF3"
+    # archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF1.mf4"
+    # salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1"
 
-    df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
+    # df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
 
-    # df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/general.parquet")
-    # df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/base.parquet")
-    # df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_CH-FD.parquet")
-    # df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_ITS2-FD.parquet")
-    # df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_ITS3-FD.parquet")
+    # archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF2.mf4"
+    # salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF2"
+
+    # df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
+
+    # archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF3.mf4"
+    # salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF3"
+
+    # df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
+
+    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/general.parquet")
+    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/base.parquet")
+    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_CH-FD.parquet")
+    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_ITS2-FD.parquet")
+    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_ITS3-FD.parquet")

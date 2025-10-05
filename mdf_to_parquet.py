@@ -208,7 +208,11 @@ def info_parquet(path_parquet: str, max_cols: int = 10):
 
     # Estadísticas resumidas
     print("\n📈 Resumen estadístico de columnas numéricas:")
+
     stats = df.describe().T[["mean", "std", "min", "max"]]
+
+    # Simplificar los nombres de las columnas
+    stats.index = [name.split('.')[-1] for name in stats.index]
 
     # Mostrar solo algunas columnas si son demasiadas
     if len(stats) > max_cols:
@@ -217,28 +221,13 @@ def info_parquet(path_parquet: str, max_cols: int = 10):
     else:
         print(stats)
 
+
     return df
 
-
-
 if __name__ == "__main__":
-    # archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF1.mf4"
-    # salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1"
+    archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF1.mf4"
+    salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1"
 
-    # df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
+    df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
 
-    # archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF2.mf4"
-    # salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF2"
-
-    # df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
-
-    # archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF3.mf4"
-    # salida_parquet = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF3"
-
-    # df = mdf_to_parquet_by_channels(archivo_mdf, salida_parquet, num_workers=8)
-
-    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/general.parquet")
-    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/base.parquet")
-    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_CH-FD.parquet")
-    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_ITS2-FD.parquet")
-    df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/CAN_ITS3-FD.parquet")
+    # df = info_parquet("/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MDF1/general.parquet")

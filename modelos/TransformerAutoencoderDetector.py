@@ -74,7 +74,13 @@ class TransformerAutoencoder(nn.Module):
         super().__init__()
         self.seq_len = seq_len
         d_model = 2 * input_dim  # como TranAD
-        nhead = min(input_dim, d_model)  # nheads ≤ d_model
+        
+        # Buscar el número de heads válido más cercano
+        for nhead in reversed(range(1, 9)):  # intenta de 8 a 1
+            if d_model % nhead == 0:
+                break
+        else:
+            nhead = 1
 
         self.input_proj = nn.Linear(input_dim, d_model)
         self.pos_encoder = PositionalEncoding(d_model, dropout, seq_len)
@@ -108,7 +114,7 @@ class TransformerAutoencoderDetector(BaseAnomalyDetector):
         torch.backends.cudnn.benchmark = True
         self.input_dim = None
         self.seq_len = int(seq_len)
-        self.lr = float(lr)
+        self.lr = float(lr) if lr > 0 else 1e-4
         self.epochs = int(epochs)
         self.batch_size = int(batch_size)
         self.use_scaler = use_scaler
@@ -147,7 +153,7 @@ class TransformerAutoencoderDetector(BaseAnomalyDetector):
             self.input_dim = X.shape[2]
             self.seq_len = X.shape[1]
             self.model = TransformerAutoencoder(self.input_dim, self.seq_len).to(self.device)
-            self.optimizer = optim.AdamW(self.model.parameters(), lr=self.lr, fused=(self.device.type == "cuda"))
+            self.optimizer = optim.AdamW(self.model.parameters(), lr=self.lr)
 
         X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
 
@@ -168,7 +174,7 @@ class TransformerAutoencoderDetector(BaseAnomalyDetector):
                 with torch.amp.autocast(device_type=self.device.type):
                     x_hat = self.model(xb)
                     feat_idx = torch.randperm(xb.size(-1))[: xb.size(-1) // 2]
-                    loss = self.criterion(x_hat[:, feat_idx], xb[:, -1, feat_idx])
+                    loss = self.criterion(x_hat, xb[:, -1, :])
 
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
@@ -186,20 +192,45 @@ class TransformerAutoencoderDetector(BaseAnomalyDetector):
             recon = self.model(X_tensor)
             errors = torch.mean((X_tensor[:, -1, :] - recon) ** 2, dim=1)
         
-        # ===== Umbral con SPOT (POT) =====
+        # ===== Umbral con SPOT (estilo TranAD robusto) =====
+        errors_np = errors.detach().cpu().numpy()
 
-        # split: 80% inicialización, 20% stream
-        n_init = int(0.8 * len(errors))
-        init_data, stream_data = errors[:n_init], errors[n_init:]
+        # Dividimos en calibración (init) y stream
+        n_init = int(0.8 * len(errors_np))
+        train_errors = errors_np[:n_init]
+        test_errors = errors_np[n_init:]
 
-        s = SPOT(q=1e-4)  # nivel de riesgo
-        s.fit(init_data, stream_data)
-        s.initialize(level=0.98, verbose=False)
-        results = s.run(dynamic=False)
+        # Parámetros de calibración
+        q = 1e-3           # riesgo POT
+        level = 0.995      # percentil inicial
+        mult = 1.4         # amplificador final
+        perc_floor = 99.7  # percentil mínimo aceptable
 
-        # threshold final = último umbral calculado
-        self.threshold = results["thresholds"][-1]
-        print(f"Threshold calculado con SPOT: {self.threshold:.6f}")
+        # Inicialización robusta de SPOT
+        while True:
+            try:
+                s = SPOT(q)
+                s.fit(train_errors, test_errors)
+                s.initialize(level=level, min_extrema=False, verbose=False)
+            except Exception:
+                level *= 0.999  # relaja ligeramente si no converge
+                if level < 0.90:
+                    break
+            else:
+                break
+
+        ret = s.run(dynamic=False)
+        thr_seq = np.array(ret.get("thresholds", []), dtype=float)
+
+        if len(thr_seq) > 0:
+            base_thr = np.mean(thr_seq) * mult
+            perc_thr = np.percentile(train_errors, perc_floor)
+            self.threshold = float(max(base_thr, perc_thr))
+        else:
+            self.threshold = float(np.percentile(train_errors, perc_floor))
+
+        # print(f"[TransformerAE] Threshold calculado con SPOT: {self.threshold:.6f}")
+
 
         self.is_fitted = True
         return self

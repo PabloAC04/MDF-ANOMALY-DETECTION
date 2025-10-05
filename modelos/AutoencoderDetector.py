@@ -253,29 +253,3 @@ class AutoencoderDetector(BaseAnomalyDetector):
             recon = self.model(X_tensor)
             errors = torch.mean((X_tensor - recon) ** 2, dim=1).cpu().numpy()
         return errors
-
-def pick_clean_window(errors, win_len=800, step=50, crit='q90'):
-    """
-    Busca un intervalo 'limpio' para inicializar SPOT.
-    - win_len: longitud de la ventana
-    - step: salto al mover la ventana
-    - crit: criterio ('q90' = percentil 90 bajo, 'mean' = media, 'hybrid')
-    """
-    e = np.asarray(errors, dtype=float)
-    n = len(e)
-    best = None
-    best_val = np.inf
-    for i0 in range(0, n - win_len + 1, step):
-        w = e[i0:i0+win_len]
-        q90 = np.quantile(w, 0.90)
-        mu = w.mean()
-        if crit == 'q90':
-            val = q90
-        elif crit == 'mean':
-            val = mu
-        else:  # 'hybrid'
-            val = q90 + 0.5 * w.std()
-        if val < best_val:
-            best = (i0, i0+win_len)
-            best_val = val
-    return best

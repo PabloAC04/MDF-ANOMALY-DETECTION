@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import os
 import json
@@ -11,7 +9,6 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from modelos.TransformerAutoencoderDetector import TransformerAutoencoderDetector
 
-# Soporte opcional para cuDF si está disponible
 try:
     import cudf
     HAS_CUDF = True
@@ -23,18 +20,13 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.preprocessing import MinMaxScaler
 
-# ===== IMPORTA TU DETECTOR =====
-# Si ya lo tienes en modelos/TransformerAutoencoderDetector.py:
-# from modelos.TransformerAutoencoderDetector import TransformerAutoencoderDetector, create_windows
-# En caso contrario, pego un "stub" mínimo de create_windows aquí para que sea autocontenido:
+
 def create_windows(X: np.ndarray, seq_len: int) -> np.ndarray:
     N, F = X.shape
     if N < seq_len:
         raise ValueError(f"N ({N}) < seq_len ({seq_len}): no hay suficientes filas para crear ventanas")
     return np.stack([X[i:i + seq_len] for i in range(N - seq_len + 1)])
 
-
-# ========= PUNTO CLAVE: CONTRIBUCIONES POR SEÑAL =========
 def feature_contributions(x_last, recon, eps: float = 1e-12):
     """
     Calcula la contribución por señal a la reconstrucción.
@@ -76,7 +68,6 @@ def ensure_pandas(df):
     if HAS_CUDF and isinstance(df, cudf.DataFrame):
         return df.to_pandas()
     return df
-
 
 def pick_numeric_columns(df: pd.DataFrame, drop_cols=("timestamp", "split", "label")):
     drop_cols = [c for c in drop_cols if c in df.columns]
@@ -129,8 +120,6 @@ def main():
     else:
         ts = pd.Series(pd.to_datetime(np.arange(len(df_all)), unit="s"))  # <---- Serie
 
-    # Selecciona split si existe (pero aquí se pide entrenar/test del mismo parquet, 60/40 temporal)
-    # Por simplicidad ignoramos 'split' y hacemos corte temporal directo.
     num_df, feature_names = pick_numeric_columns(df_all)
 
     if len(feature_names) == 0:
@@ -154,11 +143,9 @@ def main():
         seq_len=args.seq_len, device=None, verbose=True, use_scaler=True
     )
 
-    # ====== ENTRENAMIENTO ======
     X_train_seq = det.preprocess(X_train_raw, retrain=True)
     det.fit(X_train_seq)
 
-    # ====== TEST: SCORES + RECON PARA CONTRIBUCIONES ======
     X_test_seq = det.preprocess(X_test_raw, retrain=False)
     scores, x_last, recon = scores_and_recon(det, X_test_seq)  # scores longitud = len(X_test_raw) - seq_len + 1
 
@@ -257,7 +244,6 @@ def main():
         top_signals = [s["name"] for s in sorted(anom["signals"], key=lambda x: x["contribution"], reverse=True)[:3]]
         n_signals = len(top_signals)
 
-        # Crear la figura
         plt.figure(figsize=(12, 2.5 * n_signals))
         for j, sig in enumerate(top_signals):
             plt.subplot(n_signals, 1, j + 1)

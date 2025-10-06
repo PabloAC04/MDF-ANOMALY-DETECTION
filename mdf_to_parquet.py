@@ -58,7 +58,6 @@ def process_channel_chunk(path_mdf, channels, raster, include_labels=False):
         df_lbl = mdf_reduced.to_dataframe(channels=channels, raster=raster, raw=False)
         for col in df_raw.columns:
             if col in df_lbl.columns:
-                # si todos los valores de label son numéricos → ignorar
                 lbl_vals = df_lbl[col].dropna().unique()
 
                 # ignorar si todos los valores de label son numéricos
@@ -196,18 +195,18 @@ def info_parquet(path_parquet: str, max_cols: int = 10):
     mem_bytes = df.memory_usage(deep=True).sum()
     mem_mb = mem_bytes / (1024**2)
 
-    print(f"📂 Archivo: {path_parquet}")
-    print(f"📊 Filas: {filas:,}")
-    print(f"📊 Columnas: {columnas:,}")
-    print(f"💾 Tamaño en memoria: {mem_mb:.2f} MB")
-    print(f"💾 Tamaño en disco (aprox.): {os.path.getsize(path_parquet) / (1024**2):.2f} MB")
+    print(f"Archivo: {path_parquet}")
+    print(f"Filas: {filas:,}")
+    print(f"Columnas: {columnas:,}")
+    print(f"Tamaño en memoria: {mem_mb:.2f} MB")
+    print(f"Tamaño en disco (aprox.): {os.path.getsize(path_parquet) / (1024**2):.2f} MB")
 
     # Tipos de datos
-    print("\n📑 Tipos de datos:")
+    print("\nTipos de datos:")
     print(df.dtypes.value_counts())
 
     # Estadísticas resumidas
-    print("\n📈 Resumen estadístico de columnas numéricas:")
+    print("\nResumen estadístico de columnas numéricas:")
 
     stats = df.describe().T[["mean", "std", "min", "max"]]
 

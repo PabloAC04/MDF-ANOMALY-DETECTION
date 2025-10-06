@@ -1,6 +1,9 @@
 import math
 import cupy as cp
 from modelos.base import BaseAnomalyDetector
+import math
+import numpy as np
+from modelos.base import BaseAnomalyDetector
 
 GAMMA_EULER = 0.5772156649  # constante de Euler-Mascheroni
 
@@ -34,7 +37,6 @@ class iTree:
         n, d = X.shape
         self.max_height = max_height
 
-        # Estructuras de nodos (listas en Python -> luego a cupy)
         feat_list   = []
         thr_list    = []
         left_list   = []
@@ -42,14 +44,11 @@ class iTree:
         size_list   = []
         leaf_list   = []
 
-        # Pila de construcción: (indices_submuestra (cp.ndarray), depth, node_index)
-        # Cada push añade un nodo (pendiente de resolver hijos)
         stack = []
 
-        # Creamos el nodo raíz
         root_idx = 0
-        feat_list.append(-1)     # placeholder
-        thr_list.append(cp.nan)  # placeholder
+        feat_list.append(-1)     
+        thr_list.append(cp.nan)  
         left_list.append(-1)
         right_list.append(-1)
         size_list.append(int(n))
@@ -66,10 +65,8 @@ class iTree:
                 size_list[node_id] = subset_size
                 continue
 
-            # Elegir atributo
             attr = int(cp.random.randint(d))
 
-            # min/max del atributo en el subset
             col_vals = X[subset_idx, attr]
             min_v = cp.min(col_vals)
             max_v = cp.max(col_vals)
@@ -89,12 +86,11 @@ class iTree:
                 ridx = cp.random.randint(subset_size)
                 split_val = col_vals[ridx].astype(cp.float32)
 
-            # Split (todo en GPU)
             left_mask = col_vals < split_val
             left_idx = subset_idx[left_mask]
             right_idx = subset_idx[~left_mask]
 
-            # Si un lado queda vacío, marcamos hoja (caso degenerado)
+            # Si un lado queda vacío, marcamos hoja
             if left_idx.size == 0 or right_idx.size == 0:
                 leaf_list[node_id] = True
                 size_list[node_id] = subset_size
@@ -125,7 +121,7 @@ class iTree:
 
         # Convertimos a arrays en GPU
         self.n_nodes = len(feat_list)
-        # feat/thr/left/right/size/is_leaf deben ser cp.ndarray
+
         self.feat   = cp.asarray(feat_list, dtype=cp.int32)
         self.thr     = cp.asarray(cp.stack([cp.asarray(x, dtype=cp.float32) for x in thr_list]))
         self.left    = cp.asarray(left_list, dtype=cp.int32)
@@ -143,7 +139,7 @@ class iTree:
         # Nodo actual por muestra
         curr = cp.zeros(n, dtype=cp.int32)
         done = cp.zeros(n, dtype=cp.bool_)
-        # Depth acumulada (sin el término c(size), que se sumará al llegar a hoja)
+        # Depth acumulada 
         depth = cp.zeros(n, dtype=cp.float32)
         gamma32 = cp.float32(GAMMA_EULER)
 
@@ -167,7 +163,6 @@ class iTree:
                 # aproximamos con fórmula continua usando log para evitar overhead Python:
                 # c(n) ~ 2*(ln(n-1)+gamma) - 2*(n-1)/n  para n>1, y 0 si n<=1
                 szf = sz.astype(cp.float32)
-                # manejo de casos n<=1
                 c_sz = cp.where(
                     szf <= 1.0,
                     cp.float32(0.0),
@@ -197,9 +192,7 @@ class iTree:
 
         return depth
 
-# ------------------------------
 # Bosque de aislamiento
-# ------------------------------
 
 class IsolationForest(BaseAnomalyDetector):
     """
@@ -220,14 +213,11 @@ class IsolationForest(BaseAnomalyDetector):
         self.contamination = contamination
         self.threshold_ = None
         self.trees: list[iTree] = []
-        self._denom = max(c_factor(self.sample_size), 1e-8)  # escalar CPU
+        self._denom = max(c_factor(self.sample_size), 1e-8)  
         if random_state is not None:
-            # RNG CPU para reproducibilidad de decisiones discretas;
-            # para cupy se puede usar cp.random.seed desde fuera si deseas.
             import numpy as _np
             self._rng = _np.random.default_rng(random_state)
 
-    # ---------- Hooks de tu pipeline ----------
     def preprocess(self, X, retrain: bool = True):
         """
         Recibe cudf.DataFrame o pandas.DataFrame.
@@ -242,7 +232,6 @@ class IsolationForest(BaseAnomalyDetector):
             # pandas / numpy
             return cp.asarray(X.values if hasattr(X, "values") else X)
 
-    # ------------------------------------------
 
     def fit(self, X):
         X = cp.asarray(X, dtype=cp.float32)
@@ -276,7 +265,7 @@ class IsolationForest(BaseAnomalyDetector):
                 self.trees.append(tree)
                 pending.append(s)
 
-        # Sincroniza todos los streams (asegura que todos los árboles están listos)
+        # Sincroniza todos los streams
         for s in pending:
             s.synchronize()
 
@@ -309,28 +298,7 @@ class IsolationForest(BaseAnomalyDetector):
         return self.anomaly_score(X) >= tau
 
 
-
-# isolation_forest_cpu.py
-import math
-import numpy as np
-from joblib import Parallel, delayed
-from modelos.base import BaseAnomalyDetector
-
-GAMMA_EULER = 0.5772156649
-
-def harmonic_number(n: int) -> float:
-    if n <= 1:
-        return 0.0
-    return math.log(n) + GAMMA_EULER
-
-def c_factor(n: int) -> float:
-    if n <= 1:
-        return 0.0
-    return 2.0 * harmonic_number(n - 1) - (2.0 * (n - 1) / n)
-
-# =========================
-# Árbol CPU (NumPy)
-# =========================
+# Árbol CPU 
 class iTreeCPU:
     """
     Árbol de Isolation Forest en CPU con almacenamiento por arrays NumPy.
@@ -346,7 +314,6 @@ class iTreeCPU:
         left_list, right_list = [], []
         size_list, leaf_list = [], []
 
-        # Pila: (idx_submuestra [np.int32], depth, node_id)
         stack = []
 
         # Nodo raíz
@@ -424,7 +391,7 @@ class iTreeCPU:
             left_list[node_id] = left_id
             right_list[node_id] = right_id
 
-            # Apilar primero el derecho (LIFO) para procesar izquierda después
+            # Apilar primero el derecho para procesar izquierda después
             stack.append((right_idx, depth + 1, right_id))
             stack.append((left_idx,  depth + 1, left_id))
 
@@ -485,10 +452,7 @@ class iTreeCPU:
 
         return depth
 
-
-# =========================
-# Bosque CPU (paralelismo extremo con procesos)
-# =========================
+# Bosque CPU 
 class IsolationForestCPU(BaseAnomalyDetector):
     """
     Isolation Forest en CPU con construcción de árboles en paralelo (joblib, backend 'loky').
@@ -509,7 +473,6 @@ class IsolationForestCPU(BaseAnomalyDetector):
         self._denom = max(c_factor(self.sample_size), 1e-8)
         self.n_jobs = n_jobs
 
-    # ---------- Hooks de tu pipeline ----------
     def preprocess(self, X, retrain: bool = True, y=None):
         """
         Acepta pandas/cudf/np. Devuelve np.ndarray en CPU.
@@ -521,10 +484,8 @@ class IsolationForestCPU(BaseAnomalyDetector):
             return np.asarray(X.values, dtype=np.float32)
         return np.asarray(X, dtype=np.float32)
 
-    # ------------------------------------------
 
     def _build_one_tree(self, X_np: np.ndarray, height_limit: int) -> iTreeCPU:
-        # muestreo CPU súper rápido
         n = X_np.shape[0]
         if self.sample_size < n:
             idx = np.random.permutation(n)[:self.sample_size]
@@ -538,7 +499,7 @@ class IsolationForestCPU(BaseAnomalyDetector):
         n = int(X_np.shape[0])
         height_limit = int(math.ceil(math.log2(max(self.sample_size, 2))))
 
-        # Construcción de árboles en paralelo con procesos (sin GIL)
+        # Construcción de árboles en paralelo con procesos 
         trees = [self._build_one_tree(X_np, height_limit) for _ in range(self.n_trees)]
         self.trees = trees
 
@@ -556,7 +517,7 @@ class IsolationForestCPU(BaseAnomalyDetector):
         X_np = self.preprocess(X, retrain=False).astype(np.float32, copy=False)
         n = int(X_np.shape[0])
         acc = np.zeros(n, dtype=np.float32)
-        # Suma de longitudes medias (secuencial; suele ser rápido)
+        # Suma de longitudes medias 
         for t in self.trees:
             h = t.path_length_batch(X_np)
             acc += h

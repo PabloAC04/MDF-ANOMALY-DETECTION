@@ -137,7 +137,6 @@ def run_experiment(
         if i == 0:
             best_plots_payload = (y_test_cpu, y_pred_cpu, y_score_cpu, kwargs)
 
-        # plot on the fly si se pide "all"
         if plot_mode == "all":
             _plot_all(y_test_cpu, y_pred_cpu, y_score_cpu, model_class.__name__, kwargs)
 
@@ -156,7 +155,7 @@ def run_experiment(
     print("="*60)
     display(df_final.round(3))
 
-    # 5) Plot solo de la mejor configuración (limpio y suficiente)
+    # 5) Plot solo de la mejor configuración 
     if plot_mode == "best" and best_plots_payload is not None:
         y_true, y_pred, y_score, best_kwargs = best_plots_payload
         _plot_all(y_true, y_pred, y_score, model_class.__name__, best_kwargs)

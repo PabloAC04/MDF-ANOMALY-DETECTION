@@ -106,7 +106,6 @@ class TransformerAutoencoder(nn.Module):
         return x_hat
 
 
-# === Detector simplificado ===
 class TransformerAutoencoderDetector(BaseAnomalyDetector):
     def __init__(self, lr=1e-3, epochs=50, batch_size=128, seq_len=10,
                  use_scaler=True, device=None, verbose=False):
@@ -254,8 +253,6 @@ class TransformerAutoencoderDetector(BaseAnomalyDetector):
             return errors, y
         return errors
 
-
-# === Utilidad: generar ventanas ===
 def create_windows(X: np.ndarray, seq_len: int) -> np.ndarray:
     N, F = X.shape
     return np.stack([X[i:i + seq_len] for i in range(N - seq_len + 1)])

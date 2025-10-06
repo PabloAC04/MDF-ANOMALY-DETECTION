@@ -26,7 +26,7 @@ class Autoencoder(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.LeakyReLU(True),
-            nn.Linear(hidden_dim, input_dim)  # sin sigmoid
+            nn.Linear(hidden_dim, input_dim)  
         )
 
     def forward(self, x):
@@ -134,7 +134,7 @@ class AutoencoderDetector(BaseAnomalyDetector):
         best_val_loss = np.inf
         epochs_no_improve = 0
 
-        # ✅ Mixed Precision
+        # Mixed Precision
         scaler = torch.amp.GradScaler()
 
         self.model.train()

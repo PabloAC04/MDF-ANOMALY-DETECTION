@@ -76,8 +76,6 @@ def read_specific_signals_to_parquet(
 
     return df
 
-
-# === Uso ===
 if __name__ == "__main__":
     archivo_mdf = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDF1.mf4"
     salida = "/home/pablo/TFG/MDF-ANOMALY-DETECTION/MDFs/MotorSignals/Motor.parquet"

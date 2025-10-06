@@ -178,7 +178,7 @@ class DatasetsToParquet:
         df_test = df_attack.iloc[val_size:].copy()
         df_val["split"], df_test["split"] = "val", "test"
 
-        # --- Reducción del train: últimas 2 * len(val) ---
+        # Reducción del train: últimas 2 * len(val) 
         target_train_size = 2 * len(df_val)
         if len(df_train) > target_train_size:
             df_train = df_train.iloc[-target_train_size:]
